@@ -838,7 +838,7 @@ test = ["pytest (>=7.2)", "pytest-cov (>=4.0)"]
 name = "numpy"
 version = "2.2.6"
 description = "Fundamental package for array computing in Python"
-optional = true
+optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 markers = "extra == \"docs\""
@@ -1151,7 +1151,7 @@ files = [
 name = "pillow"
 version = "11.2.1"
 description = "Python Imaging Library (Fork)"
-optional = true
+optional = false
 python-versions = ">=3.9"
 groups = ["main"]
 markers = "extra == \"docs\""
@@ -1795,7 +1795,7 @@ dev = ["black", "codecov", "isort", "mdformat", "mdformat-mkdocs", "mkdocs", "mk
 name = "torchvision"
 version = "0.22.0"
 description = "image and video datasets and models for torch deep learning"
-optional = true
+optional = false
 python-versions = ">=3.9"
 groups = ["main"]
 markers = "extra == \"docs\""
@@ -1898,4 +1898,4 @@ docs = ["matplotlib", "networkx", "sphinx", "sphinx-copybutton", "sphinx-gallery
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.10"
-content-hash = "a600e3474f1070f01ff1cd8205b0ea84f41a396332398d99f136b0ad800b9a73"
+content-hash = "a462de058f6a211908de34c6de66165677c60d35a18db6457d95f9d6b837455d"

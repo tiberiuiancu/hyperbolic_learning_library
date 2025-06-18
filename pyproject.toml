@@ -7,13 +7,14 @@ authors = ["Max van Spengler", "Philipp Wirth", "Pascal Mettes"]
 [tool.poetry.dependencies]
 python = "^3.10"
 Torch = "2.7.0"
+torchvision = { version = "0.22.0" }
+
 # Optional dependencies for building the docs.
 # Install with poetry install --extras "docs"
 sphinx-copybutton = { version = "^0.5.2", optional = true }
 sphinx = { version = "^7.2.6", optional = true }
 sphinx-gallery = { version = "^0.15.0", optional = true }
 sphinx-tabs = { version = "^3.4.5", optional = true }
-torchvision = { version = "0.22.0", optional = true }
 matplotlib = { version = "^3.8.4", optional = true }
 networkx = { version = "^3.2.1", optional = true }
 graphviz = "^0.20.3"
