@@ -7,11 +7,15 @@ from torchview import draw_graph
 import torch
 from torch.profiler import profile, record_function, ProfilerActivity
 
-in_size = 2**12
+
+device = "cuda" if torch.cuda.is_available() else "cpu"
+
+in_size = 8192
+out_size = 32768
 
 manifold = PoincareBall(c=Curvature(requires_grad=True))
-layer = HLinear(in_size, in_size, manifold=manifold)
-inputs = torch.rand((11, 64, in_size))
+layer = HLinear(in_size, out_size, manifold=manifold).to(device)
+inputs = torch.rand((11, 64, in_size), device=device)
 tangents = [TangentTensor(data=inputs[i], man_dim=1, manifold=manifold) for i in range(11)]
 
 
@@ -28,7 +32,9 @@ class LayerWrapper(torch.nn.Module):
 for i in range(10):
     layer(tangents[i])
 
-with profile(activities=[ProfilerActivity.CPU], record_shapes=True) as prof:
+
+activities = [ProfilerActivity.CUDA] if device == "cuda" else [ProfilerActivity.CPU]
+with profile(activities=activities, record_shapes=True) as prof:
     with record_function("layer forward"):
         layer(tangents[-1])
 
