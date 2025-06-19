@@ -3,6 +3,7 @@ import torch.nn as nn
 
 import torch.profiler
 from torch.profiler import record_function
+from tqdm import tqdm
 
 from hypll.manifolds import Manifold
 from hypll.optim.adam import RiemannianAdam
@@ -39,8 +40,8 @@ def profile_training(
         profile_memory=True,
         with_stack=True,
     ) as prof:
-        for step, data in enumerate(trainloader):
-            if step >= active + warmup:
+        for step, data in tqdm(enumerate(trainloader), total=active + warmup + wait):
+            if step >= active + warmup + wait:
                 break
 
             with record_function("move_to_cuda"):
