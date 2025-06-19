@@ -3,6 +3,11 @@ import torch
 import torchvision
 import torchvision.transforms as transforms
 
+from torchvision.datasets import ImageNet
+from torchvision import transforms
+from torch.utils.data import DataLoader, Subset
+
+
 from benchmark.models.hresnet import PoincareBottleneckBlock, PoincareResNet, PoincareResidualBlock
 from benchmark.models.resnet import BottleneckBlock, ResNet, ResidualBlock
 from hypll.manifolds.poincare_ball.manifold import PoincareBall
@@ -34,6 +39,29 @@ def get_cifar10(batch_size: int = 64, flatten: bool = False):
     classes = ("plane", "car", "bird", "cat", "deer", "dog", "frog", "horse", "ship", "truck")
 
     return trainloader, testloader, classes
+
+
+def get_imagenet(batch_size: int = 64, num_images: int = None):
+    transform = transforms.Compose(
+        [
+            transforms.Resize(256),
+            transforms.CenterCrop(224),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ]
+    )
+
+    trainset = ImageNet(root="./data", split="train", transform=transform)
+    testset = ImageNet(root="./data", split="val", transform=transform)
+
+    if num_images:
+        trainset = Subset(trainset, range(min(num_images, len(trainset))))
+        testset = Subset(testset, range(min(num_images, len(testset))))
+
+    trainloader = DataLoader(trainset, batch_size=batch_size, shuffle=True, num_workers=4)
+    testloader = DataLoader(testset, batch_size=batch_size, shuffle=False, num_workers=4)
+
+    return trainloader, testloader
 
 
 def make_resnet(
