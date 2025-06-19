@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Optional
+from typing import Optional, Tuple
 
 from torch.nn import Module
 from torch.nn.common_types import _size_2_t, _size_any_t
@@ -31,6 +31,11 @@ class HAvgPool2d(Module):
         )
         self.manifold = manifold
         self.stride = stride if (stride is not None) else self.kernel_size
+        self.stride = (
+            self.stride
+            if isinstance(self.stride, tuple) and len(self.stride) == 2
+            else (self.stride, self.stride)
+        )
         self.padding = (
             padding if isinstance(padding, tuple) and len(padding) == 2 else (padding, padding)
         )
@@ -114,3 +119,66 @@ class HMaxPool2d(_HMaxPoolNd):
             return_indices=self.return_indices,
         )
         return op_in_tangent_space(op=max_pool2d_partial, manifold=self.manifold, input=input)
+
+
+# TODO: ideally these modules would internally wrap hnn.functional
+#       similar to how the it's done in torch
+class HAdaptiveAvgPool2d(Module):
+    def __init__(
+        self,
+        output_size: Tuple[int, int],
+        manifold: Manifold,
+        use_midpoint: bool = False,
+    ):
+        super().__init__()
+        self.output_size = output_size
+        self.manifold = manifold
+        self.use_midpoint = use_midpoint
+
+    def forward(self, input: ManifoldTensor) -> ManifoldTensor:
+        check_if_manifolds_match(layer=self, input=input)
+        check_if_man_dims_match(layer=self, man_dim=1, input=input)
+
+        batch_size, channels, height, width = input.size()
+        target_h, target_w = self.output_size
+
+        kernel_size_h = height // target_h
+        kernel_size_w = width // target_w
+
+        stride_h = kernel_size_h
+        stride_w = kernel_size_w
+
+        kernel_size = (kernel_size_h, kernel_size_w)
+        stride = (stride_h, stride_w)
+        padding = (0, 0)
+
+        unfolded_input = self.manifold.unfold(
+            input=input,
+            kernel_size=kernel_size,
+            padding=padding,
+            stride=stride,
+        )
+
+        num_elements = kernel_size_h * kernel_size_w
+        output_height = (height - kernel_size_h) // stride_h + 1
+        output_width = (width - kernel_size_w) // stride_w + 1
+
+        per_kernel_view = unfolded_input.tensor.view(
+            batch_size,
+            channels,
+            num_elements,
+            output_height * output_width,
+        )
+
+        x = ManifoldTensor(data=per_kernel_view, manifold=self.manifold, man_dim=1)
+
+        if self.use_midpoint:
+            aggregates = self.manifold.midpoint(x=x, batch_dim=2)
+        else:
+            aggregates = self.manifold.frechet_mean(x=x, batch_dim=2)
+
+        return ManifoldTensor(
+            data=aggregates.tensor.reshape(batch_size, channels, output_height, output_width),
+            manifold=self.manifold,
+            man_dim=1,
+        )
