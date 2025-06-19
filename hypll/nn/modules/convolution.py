@@ -121,7 +121,9 @@ def _output_side_length(
     Based on https://pytorch.org/docs/stable/generated/torch.nn.Conv2d.html.
 
     """
-    if kernel_size > input_side_length:
+    effective_input = input_side_length + 2 * padding
+
+    if kernel_size > effective_input:
         raise RuntimeError(
             f"Encountered invalid kernel size {kernel_size} "
             f"larger than input side length {input_side_length}"
@@ -131,4 +133,4 @@ def _output_side_length(
             f"Encountered invalid stride {stride} "
             f"larger than input side length {input_side_length}"
         )
-    return 1 + (input_side_length + 2 * padding - (kernel_size - 1) - 1) // stride
+    return (effective_input - kernel_size) // stride + 1
