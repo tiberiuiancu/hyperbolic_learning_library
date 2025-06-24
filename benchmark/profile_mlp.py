@@ -21,5 +21,12 @@ if __name__ == "__main__":
     profile_training(net, trainloader, manifold=manifold, config="hmlp")
 
     # profile hyperbolic mlp with torch compile
-    net = MLP(manifold=manifold, hdims=hdims).compile()
-    profile_training(net, trainloader, manifold=manifold, config="hmlp_compiled")
+    net = MLP(manifold=manifold, hdims=hdims)
+    profile_training(
+        net,
+        trainloader,
+        manifold=manifold,
+        compile_model=True,
+        compile_optimizer=True,
+        config="hmlp_compiled",
+    )
