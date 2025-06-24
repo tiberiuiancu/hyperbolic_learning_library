@@ -1,3 +1,4 @@
+import os
 import torch
 import torch.nn as nn
 
@@ -15,10 +16,9 @@ MAX_NUM_OF_MEM_EVENTS_PER_SNAPSHOT = 100_000
 def profile_training(
     model: nn.Module,
     trainloader: torch.utils.data.DataLoader,
-    active: int = 8,
-    warmup: int = 2,
-    wait: int = 2,
-    config_name: str = "model",
+    active: int = 1,
+    warmup: int = 1,
+    config: str = "model",
     manifold: Manifold | None = None,
     lr: float = 0.001,
 ):
@@ -35,13 +35,13 @@ def profile_training(
 
     with torch.profiler.profile(
         activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA],
-        schedule=torch.profiler.schedule(warmup=warmup, active=active, wait=wait),
+        schedule=torch.profiler.schedule(warmup=warmup, active=active, wait=0),
         record_shapes=True,
         profile_memory=True,
         with_stack=True,
     ) as prof:
-        for step, data in tqdm(enumerate(trainloader), total=active + warmup + wait):
-            if step >= active + warmup + wait:
+        for step, data in tqdm(enumerate(trainloader), total=active + warmup):
+            if step >= active + warmup:
                 break
 
             with record_function("move_to_cuda"):
@@ -72,12 +72,15 @@ def profile_training(
             prof.step()
 
     # write trace and memory usage history
-    prof.export_chrome_trace(f"traces/{config_name}_trace.json")
-    prof.export_memory_timeline(f"traces/{config_name}_mem.html", device="cuda:0")
+    out_dir = f"traces/{config}"
+    os.makedirs(out_dir, exist_ok=True)
+
+    prof.export_chrome_trace(f"{out_dir}/{config}_trace.json")
+    prof.export_memory_timeline(f"{out_dir}/{config}_mem.html", device="cuda:0")
 
     try:
         # save detailed memory snapshot
-        torch.cuda.memory._dump_snapshot(f"traces/{config_name}_mem.pickle")
+        torch.cuda.memory._dump_snapshot(f"{out_dir}/{config}_mem.pickle")
     except Exception as e:
         print(f"Failed to capture memory snapshot {e}")
 

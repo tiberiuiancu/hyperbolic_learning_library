@@ -6,16 +6,20 @@ from benchmark.profiling import profile_training
 
 
 if __name__ == "__main__":
-    hdims = [2**11, 2**11]
+    hdims = [2**14]
 
     batch_size = 64
     trainloader, _, _ = get_cifar10(batch_size, flatten=True)
 
     # profile mlp
     net = MLP(hdims=hdims)
-    profile_training(net, trainloader, config_name="mlp")
+    profile_training(net, trainloader, config="mlp")
 
     # profile hyperbolic mlp
     manifold = PoincareBall(c=Curvature(requires_grad=True))
     net = MLP(manifold=manifold, hdims=hdims)
-    profile_training(net, trainloader, manifold=manifold, config_name="hmlp")
+    profile_training(net, trainloader, manifold=manifold, config="hmlp")
+
+    # profile hyperbolic mlp with torch compile
+    net = MLP(manifold=manifold, hdims=hdims).compile()
+    profile_training(net, trainloader, manifold=manifold, config="hmlp_compiled")

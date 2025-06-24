@@ -12,11 +12,13 @@ if __name__ == "__main__":
 
     # profile mlp
     net = make_resnet(config=resnet_config)
-    profile_training(net, trainloader, config_name="resnet", active=2, warmup=2, wait=2)
+    profile_training(net, trainloader, config="resnet")
 
     # profile hyperbolic mlp
     manifold = PoincareBall(c=Curvature(requires_grad=True))
     net = make_resnet(config=resnet_config, manifold=manifold)
-    profile_training(
-        net, trainloader, manifold=manifold, config_name="hresnet", active=2, warmup=2, wait=2
-    )
+    profile_training(net, trainloader, manifold=manifold, config="hresnet")
+
+    # profile hyperbolic mlp with torch compile
+    net = make_resnet(config=resnet_config, manifold=manifold).compile()
+    profile_training(net, trainloader, manifold=manifold, config="hresnet_compiled")
