@@ -19,7 +19,7 @@ def get_cifar10(batch_size: int = 64, flatten: bool = False, num_images: Optiona
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
     ]
     if flatten:
-        t += [t.Lambda(lambda x: torch.flatten(x))]
+        t += [transforms.Lambda(lambda x: torch.flatten(x))]
     transform = transforms.Compose(t)
 
     trainset = torchvision.datasets.CIFAR10(
