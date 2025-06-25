@@ -1,9 +1,8 @@
-from typing import Optional, Union
+from typing import Literal, Optional, Union
 import torch
-import torchvision
 import torchvision.transforms as transforms
 
-from torchvision.datasets import ImageNet
+from torchvision.datasets import ImageNet, CIFAR10, Caltech256
 from torchvision import transforms
 from torch.utils.data import DataLoader, Subset
 
@@ -13,63 +12,67 @@ from benchmark.models.resnet import BottleneckBlock, ResNet, ResidualBlock
 from hypll.manifolds.poincare_ball.manifold import PoincareBall
 
 
-def get_cifar10(batch_size: int = 64, flatten: bool = False, num_images: Optional[int] = None):
-    t = [
-        transforms.ToTensor(),
-        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
-    ]
-    if flatten:
-        t += [transforms.Lambda(lambda x: torch.flatten(x))]
-    transform = transforms.Compose(t)
+def get_dataset(
+    dataset: Literal["imagenet", "cifar10", "caltech256"],
+    batch_size: int,
+    flatten: bool = False,
+    n_samples: int | None = None,
+) -> tuple[DataLoader, DataLoader] | DataLoader:
+    t = []
 
-    trainset = torchvision.datasets.CIFAR10(
-        root="./data", train=True, download=True, transform=transform
-    )
-    testset = torchvision.datasets.CIFAR10(
-        root="./data", train=False, download=True, transform=transform
-    )
-
-    if num_images:
-        trainset = Subset(trainset, range(min(num_images, len(trainset))))
-        testset = Subset(testset, range(min(num_images, len(testset))))
-
-    trainloader = torch.utils.data.DataLoader(
-        trainset, batch_size=batch_size, shuffle=True, num_workers=0
-    )
-    testloader = torch.utils.data.DataLoader(
-        testset, batch_size=batch_size, shuffle=False, num_workers=0
-    )
-
-    classes = ("plane", "car", "bird", "cat", "deer", "dog", "frog", "horse", "ship", "truck")
-
-    return trainloader, testloader, classes
-
-
-def get_imagenet(batch_size: int = 64, num_images: int = None):
-    transform = transforms.Compose(
-        [
+    if dataset == "imagenet":
+        t += [
             transforms.Resize(256),
             transforms.CenterCrop(224),
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ]
+    elif dataset == "cifar10":
+        t += [
+            transforms.ToTensor(),
+            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+        ]
+    elif dataset == "caltech256":
+        t += [
+            transforms.Resize((256, 256)),
+            transforms.CenterCrop(224),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.45], std=[0.225]),
+        ]
+    else:
+        raise ValueError(f"Invalid dataset {dataset}")
+
+    if flatten:
+        t += [transforms.Lambda(lambda x: torch.flatten(x))]
+
+    transform = transforms.Compose(t)
+
+    if dataset == "imagenet":
+        dataset_class = ImageNet
+    elif dataset == "cifar10":
+        dataset_class = CIFAR10
+    elif dataset == "caltech256":
+        dataset_class = Caltech256
+
+    dataset_kwargs = dict(root="./data", transform=transform)
+    if dataset in ["imagenet", "cifar10"]:
+        dataset_kwargs |= dict(train=True)
+    if dataset in ["cifar10"]:
+        dataset_kwargs |= dict(download=True)
+
+    trainset = dataset_class(**dataset_kwargs)
+    if n_samples:
+        trainset = Subset(trainset, range(min(n_samples, len(trainset))))
+
+    trainloader = torch.utils.data.DataLoader(
+        trainset, batch_size=batch_size, shuffle=True, num_workers=0
     )
 
-    trainset = ImageNet(root="./data", split="train", transform=transform)
-    testset = ImageNet(root="./data", split="val", transform=transform)
-
-    if num_images:
-        trainset = Subset(trainset, range(min(num_images, len(trainset))))
-        testset = Subset(testset, range(min(num_images, len(testset))))
-
-    trainloader = DataLoader(trainset, batch_size=batch_size, shuffle=True, num_workers=4)
-    testloader = DataLoader(testset, batch_size=batch_size, shuffle=False, num_workers=4)
-
-    return trainloader, testloader
+    return trainloader
 
 
 def make_resnet(
-    config: str = "18", manifold: Optional[PoincareBall] = None, **model_kwargs
+    config: str, manifold: Optional[PoincareBall] = None, **model_kwargs
 ) -> Union["ResNet", PoincareResNet]:
     # Define configurations for different ResNet variants
     channels = {

@@ -7,7 +7,7 @@ from torch.profiler import record_function
 from tqdm import tqdm
 
 from benchmark.models.mlp import MLP
-from benchmark.utils import get_cifar10, make_resnet
+from benchmark.utils import make_resnet, get_dataset
 from hypll.manifolds import Manifold
 from hypll.manifolds.poincare_ball.curvature import Curvature
 from hypll.manifolds.poincare_ball.manifold import PoincareBall
@@ -114,29 +114,45 @@ class ProfileArgs(Tap):
     model: Literal[
         "resnetmini", "resnet18", "resnet34", "resnet50", "resnet101", "resnet152", "mlp"
     ]
+    dataset: Literal["imagenet", "cifar10", "caltech256"] = "caltech256"
     hyperbolic: bool = False
     compiled: bool = False
     compile_optimizer: bool = False
     batch_size: int = 64
     mlp_hdims: list[int] = [2**14]
+    curvature: float = 0.1
 
     def configure(self):
         self.add_argument("model")
+        self.add_argument("--dataset", "-d")
         self.add_argument("--hyperbolic", "-H", action="store_true")
         self.add_argument("--compiled", "-c", action="store_true")
+        self.add_argument("--batch_size", "-bs")
 
 
 if __name__ == "__main__":
     args = ProfileArgs().parse_args()
 
     # load dataset
-    trainloader, _, _ = get_cifar10(args.batch_size, flatten=False, num_images=10 * args.batch_size)
+    trainloader = get_dataset(
+        args.dataset,
+        args.batch_size,
+        flatten=(args.model == "mlp"),
+        n_samples=10 * args.batch_size,
+    )
+
+    # assume classification task
+    in0, out0 = next(iter(trainloader))
+    in_size = torch.flatten(in0, start_dim=1).shape[-1]
+    out_size = out0.shape[-1]
 
     # create manifold
-    manifold = PoincareBall(c=Curvature(requires_grad=True)) if args.hyperbolic else None
+    manifold = (
+        PoincareBall(c=Curvature(args.curvature, requires_grad=True)) if args.hyperbolic else None
+    )
 
     if args.model == "mlp":
-        net = MLP(hdims=args.mlp_hdims, manifold=manifold)
+        net = MLP(in_size=in_size, out_size=out_size, hdims=args.mlp_hdims, manifold=manifold)
     elif args.model.startswith("resnet"):
         resnet_config = args.model.removeprefix("resnet")
         net = make_resnet(resnet_config, manifold=manifold)
