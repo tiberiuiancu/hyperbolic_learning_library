@@ -6,20 +6,33 @@ authors = ["Max van Spengler", "Philipp Wirth", "Pascal Mettes"]
 
 [tool.poetry.dependencies]
 python = "^3.10"
-Torch = "2.7.0"
-torchvision = { version = "0.22.0" }
-matplotlib = { version = "^3.8.4" }
-
-# Optional dependencies for building the docs.
-# Install with poetry install --extras "docs"
-sphinx-copybutton = { version = "^0.5.2", optional = true }
-sphinx = { version = "^7.2.6", optional = true }
-sphinx-gallery = { version = "^0.15.0", optional = true }
-sphinx-tabs = { version = "^3.4.5", optional = true }
-networkx = { version = "^3.2.1", optional = true }
+matplotlib = "^3.8.4"
 graphviz = "^0.20.3"
 torchview = "^0.2.7"
 tqdm = "^4.67.1"
+
+# Optional dependencies for building the docs
+sphinx = { version = "^7.2.6", optional = true }
+sphinx-copybutton = { version = "^0.5.2", optional = true }
+sphinx-gallery = { version = "^0.15.0", optional = true }
+sphinx-tabs = { version = "^3.4.5", optional = true }
+networkx = { version = "^3.2.1", optional = true }
+torch = {version = "^2.7.1", source = "pytorch_cu128"}
+torchvision = {version = "^0.22.1", source = "pytorch_cu128"}
+torchaudio = {version = "^2.7.1", source = "pytorch_cu128"}
+
+[tool.poetry.extras]
+docs = [
+  "sphinx",
+  "sphinx-copybutton",
+  "sphinx-gallery",
+  "sphinx-tabs",
+  "torchvision",
+  "matplotlib",
+  "networkx",
+  "timm",
+  "fastai"
+]
 
 [tool.poetry.dev-dependencies]
 black = "*"
@@ -27,18 +40,10 @@ isort = "*"
 pytest = "*"
 pytest-mock = "*"
 
-[tool.poetry.extras]
-docs = [
-	"sphinx-copybutton",
-	"sphinx",
-	"sphinx-gallery",
-	"sphinx-tabs",
-	"torchvision",
-	"matplotlib",
-	"networkx",
-  "timm",
-  "fastai",
-]
+[[tool.poetry.source]]
+name = "pytorch_cu128"
+url = "https://download.pytorch.org/whl/cu128"
+priority = "explicit"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]
