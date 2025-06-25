@@ -6,9 +6,16 @@ import torch.profiler
 from torch.profiler import record_function
 from tqdm import tqdm
 
+from benchmark.models.mlp import MLP
+from benchmark.utils import get_cifar10, make_resnet
 from hypll.manifolds import Manifold
+from hypll.manifolds.poincare_ball.curvature import Curvature
+from hypll.manifolds.poincare_ball.manifold import PoincareBall
 from hypll.optim.adam import RiemannianAdam
 from hypll.tensors.tangent_tensor import TangentTensor
+
+from typing import Literal
+from tap import Tap
 
 MAX_NUM_OF_MEM_EVENTS_PER_SNAPSHOT = 100_000
 
@@ -101,3 +108,52 @@ def profile_training(
 
     # stop recording memory
     torch.cuda.memory._record_memory_history(enabled=None)
+
+
+class ProfileArgs(Tap):
+    model: Literal[
+        "resnetmini", "resnet18", "resnet34", "resnet50", "resnet101", "resnet152", "mlp"
+    ]
+    hyperbolic: bool = False
+    compiled: bool = False
+    compile_optimizer: bool = False
+    batch_size: int = 64
+    mlp_hdims: list[int] = [2**14]
+
+    def configure(self):
+        self.add_argument("model")
+        self.add_argument("--hyperbolic", "-H", action="store_true")
+        self.add_argument("--compiled", "-c", action="store_true")
+
+
+if __name__ == "__main__":
+    args = ProfileArgs().parse_args()
+
+    # load dataset
+    trainloader, _, _ = get_cifar10(args.batch_size, flatten=False, num_images=10 * args.batch_size)
+
+    # create manifold
+    manifold = PoincareBall(c=Curvature(requires_grad=True)) if args.hyperbolic else None
+
+    if args.model == "mlp":
+        net = MLP(hdims=args.mlp_hdims, manifold=manifold)
+    elif args.model.startswith("resnet"):
+        resnet_config = args.model.removeprefix("resnet")
+        net = make_resnet(resnet_config, manifold=manifold)
+    else:
+        raise ValueError(f"Invalid model {args.model}")
+
+    config_name = (
+        ("h_" if args.hyperbolic else "")
+        + ("c_" if args.compiled else "")
+        + ("co_" if args.compile_optimizer else "")
+        + f"{args.model}"
+    )
+    profile_training(
+        model=net,
+        trainloader=trainloader,
+        config=config_name,
+        manifold=manifold,
+        compile_model=args.compiled,
+        compile_optimizer=args.compile_optimizer,
+    )

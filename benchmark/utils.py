@@ -69,7 +69,7 @@ def get_imagenet(batch_size: int = 64, num_images: int = None):
 
 
 def make_resnet(
-    config: str = "18", manifold: Optional[PoincareBall] = None
+    config: str = "18", manifold: Optional[PoincareBall] = None, **model_kwargs
 ) -> Union["ResNet", PoincareResNet]:
     # Define configurations for different ResNet variants
     channels = {
@@ -98,7 +98,7 @@ def make_resnet(
             f"Invalid config: {config}. Available options are: {list(channels.keys())}"
         )
 
-    kwargs = {
+    kwargs = model_kwargs | {
         "channel_sizes": channels[config],
         "group_depths": depths[config],
         "num_classes": 10,

@@ -20,6 +20,7 @@ networkx = { version = "^3.2.1", optional = true }
 torch = {version = "^2.7.1", source = "pytorch_cu128"}
 torchvision = {version = "^0.22.1", source = "pytorch_cu128"}
 torchaudio = {version = "^2.7.1", source = "pytorch_cu128"}
+typed-argument-parser = "^1.10.1"
 
 [tool.poetry.extras]
 docs = [
