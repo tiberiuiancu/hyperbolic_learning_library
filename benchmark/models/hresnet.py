@@ -15,6 +15,7 @@ class PoincareResidualBlock(nn.Module):
         manifold: PoincareBall,
         stride: int = 1,
         downsample: Optional[nn.Sequential] = None,
+        use_midpoint: bool = True,
     ):
         super().__init__()
         self.in_channels = in_channels
@@ -32,7 +33,9 @@ class PoincareResidualBlock(nn.Module):
             padding=1,
             bias=False,
         )
-        self.bn1 = hnn.HBatchNorm2d(features=out_channels, manifold=manifold)
+        self.bn1 = hnn.HBatchNorm2d(
+            features=out_channels, manifold=manifold, use_midpoint=use_midpoint
+        )
         self.relu = hnn.HReLU(manifold=self.manifold)
         self.conv2 = hnn.HConvolution2d(
             in_channels=out_channels,
@@ -42,7 +45,9 @@ class PoincareResidualBlock(nn.Module):
             padding=1,
             bias=False,
         )
-        self.bn2 = hnn.HBatchNorm2d(features=out_channels, manifold=manifold)
+        self.bn2 = hnn.HBatchNorm2d(
+            features=out_channels, manifold=manifold, use_midpoint=use_midpoint
+        )
 
     def forward(self, x: ManifoldTensor) -> ManifoldTensor:
         residual = x
@@ -70,6 +75,7 @@ class PoincareBottleneckBlock(nn.Module):
         stride: int = 1,
         downsample: Optional[nn.Module] = None,
         bottleneck_ratio: int = 4,
+        use_midpoint: bool = True,
     ):
         super().__init__()
         mid_channels = out_channels // bottleneck_ratio
@@ -84,7 +90,9 @@ class PoincareBottleneckBlock(nn.Module):
             manifold=manifold,
             bias=False,
         )
-        self.bn1 = hnn.HBatchNorm2d(features=mid_channels, manifold=manifold)
+        self.bn1 = hnn.HBatchNorm2d(
+            features=mid_channels, manifold=manifold, use_midpoint=use_midpoint
+        )
 
         self.conv2 = hnn.HConvolution2d(
             in_channels=mid_channels,
@@ -95,7 +103,9 @@ class PoincareBottleneckBlock(nn.Module):
             manifold=manifold,
             bias=False,
         )
-        self.bn2 = hnn.HBatchNorm2d(features=mid_channels, manifold=manifold)
+        self.bn2 = hnn.HBatchNorm2d(
+            features=mid_channels, manifold=manifold, use_midpoint=use_midpoint
+        )
 
         self.conv3 = hnn.HConvolution2d(
             in_channels=mid_channels,
@@ -104,7 +114,9 @@ class PoincareBottleneckBlock(nn.Module):
             manifold=manifold,
             bias=False,
         )
-        self.bn3 = hnn.HBatchNorm2d(features=out_channels, manifold=manifold)
+        self.bn3 = hnn.HBatchNorm2d(
+            features=out_channels, manifold=manifold, use_midpoint=use_midpoint
+        )
 
     def forward(self, x: ManifoldTensor) -> ManifoldTensor:
         residual = x
@@ -137,6 +149,7 @@ class PoincareResNet(nn.Module):
         manifold: PoincareBall,
         block: Type[Union[PoincareResidualBlock, PoincareBottleneckBlock]] = PoincareResidualBlock,
         num_classes: int = 10,
+        use_midpoint: bool = True,
     ):
         super().__init__()
         assert len(channel_sizes) == 4 and len(group_depths) == 4
@@ -152,21 +165,23 @@ class PoincareResNet(nn.Module):
             padding=3,
             manifold=manifold,
         )
-        self.bn = hnn.HBatchNorm2d(features=channel_sizes[0], manifold=manifold)
+        self.bn = hnn.HBatchNorm2d(
+            features=channel_sizes[0], manifold=manifold, use_midpoint=use_midpoint
+        )
         self.relu = hnn.HReLU(manifold=manifold)
         self.maxpool = hnn.HMaxPool2d(kernel_size=3, stride=2, padding=1, manifold=manifold)
 
         self.group1 = self._make_group(
-            channel_sizes[0], channel_sizes[0], group_depths[0], stride=1
+            channel_sizes[0], channel_sizes[0], group_depths[0], stride=1, use_midpoint=use_midpoint
         )
         self.group2 = self._make_group(
-            channel_sizes[0], channel_sizes[1], group_depths[1], stride=2
+            channel_sizes[0], channel_sizes[1], group_depths[1], stride=2, use_midpoint=use_midpoint
         )
         self.group3 = self._make_group(
-            channel_sizes[1], channel_sizes[2], group_depths[2], stride=2
+            channel_sizes[1], channel_sizes[2], group_depths[2], stride=2, use_midpoint=use_midpoint
         )
         self.group4 = self._make_group(
-            channel_sizes[2], channel_sizes[3], group_depths[3], stride=2
+            channel_sizes[2], channel_sizes[3], group_depths[3], stride=2, use_midpoint=use_midpoint
         )
 
         self.avg_pool = hnn.HAdaptiveAvgPool2d((1, 1), manifold=manifold)
@@ -195,6 +210,7 @@ class PoincareResNet(nn.Module):
         out_channels: int,
         depth: int,
         stride: int = 1,
+        use_midpoint: bool = True,
     ) -> nn.Sequential:
         downsample = None
         if stride != 1 or in_channels != out_channels:
@@ -213,6 +229,7 @@ class PoincareResNet(nn.Module):
                 manifold=self.manifold,
                 stride=stride,
                 downsample=downsample,
+                use_midpoint=use_midpoint,
             )
         ]
 
@@ -222,6 +239,9 @@ class PoincareResNet(nn.Module):
                     in_channels=out_channels,
                     out_channels=out_channels,
                     manifold=self.manifold,
+                    stride=1,
+                    downsample=None,
+                    use_midpoint=use_midpoint,
                 )
             )
 
