@@ -10,15 +10,22 @@ if __name__ == "__main__":
     resnet_config = "mini"
     trainloader, _, _ = get_cifar10(batch_size, flatten=False, num_images=20)
 
-    # profile mlp
+    # profile resnet
     net = make_resnet(config=resnet_config)
     profile_training(net, trainloader, config="resnet")
 
-    # profile hyperbolic mlp
+    # profile hyperbolic resnet
     manifold = PoincareBall(c=Curvature(requires_grad=True))
     net = make_resnet(config=resnet_config, manifold=manifold)
     profile_training(net, trainloader, manifold=manifold, config="hresnet")
 
-    # profile hyperbolic mlp with torch compile
-    net = make_resnet(config=resnet_config, manifold=manifold).compile()
-    profile_training(net, trainloader, manifold=manifold, config="hresnet_compiled")
+    # profile hyperbolic resnet with torch compile
+    net = make_resnet(config=resnet_config, manifold=manifold)
+    profile_training(
+        net,
+        trainloader,
+        manifold=manifold,
+        compile_model=True,
+        compile_optimizer=False,
+        config="hresnet_compiled",
+    )
