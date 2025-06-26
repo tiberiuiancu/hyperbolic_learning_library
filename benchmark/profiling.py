@@ -34,32 +34,35 @@ def profile_training(
 ):
     torch.cuda.memory._record_memory_history(max_entries=MAX_NUM_OF_MEM_EVENTS_PER_SNAPSHOT)
 
-    model.cuda()
-    if compile_model:
-        model = torch.compile(model)
-
-    criterion = nn.CrossEntropyLoss()
-    optimizer = (
-        torch.optim.Adam(model.parameters(), lr=lr)
-        if manifold is None
-        else RiemannianAdam(model.parameters(), lr=lr)
-    )
-
-    def opt():
-        optimizer.step()
-        optimizer.zero_grad(set_to_none=True)
-
-    @torch.compile
-    def opt_compiled():
-        opt()
-
     with torch.profiler.profile(
         activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA],
-        schedule=torch.profiler.schedule(warmup=warmup, active=active, wait=wait),
+        schedule=torch.profiler.schedule(warmup=warmup, active=active, wait=wait, skip_first=1),
         record_shapes=True,
         profile_memory=True,
         with_stack=True,
     ) as prof:
+        model.cuda()
+        if compile_model:
+            model = torch.compile(model)
+
+        criterion = nn.CrossEntropyLoss()
+        optimizer = (
+            torch.optim.Adam(model.parameters(), lr=lr)
+            if manifold is None
+            else RiemannianAdam(model.parameters(), lr=lr)
+        )
+
+        def opt():
+            optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
+
+        @torch.compile
+        def opt_compiled():
+            opt()
+
+        # first step is skipped
+        prof.step()
+
         # todo: allocate mempory after profiler start
         for step, data in tqdm(enumerate(trainloader), total=active + warmup + wait):
             if step >= active + warmup + wait:
@@ -71,7 +74,7 @@ def profile_training(
 
             if manifold is not None:
                 with record_function("move_to_manifold"):
-                    # todo: try to compile this
+                    # TODO: try to compile this
                     tangents = TangentTensor(data=inputs, man_dim=1, manifold=manifold)
                     inputs = manifold.expmap(tangents)
 
@@ -119,8 +122,11 @@ class ProfileArgs(Tap):
     compiled: bool = False
     compile_optimizer: bool = False
     batch_size: int = 64
-    mlp_hdims: list[int] = [2**14]
+    mlp_hdims: list[int] = [2**10]
     curvature: float = 0.1
+    active: int = 1
+    warmup: int = 1
+    wait: int = 1
 
     def configure(self):
         self.add_argument("model")
@@ -128,6 +134,8 @@ class ProfileArgs(Tap):
         self.add_argument("--hyperbolic", "-H", action="store_true")
         self.add_argument("--compiled", "-c", action="store_true")
         self.add_argument("--batch_size", "-bs")
+        self.add_argument("-a", "--active")
+        self.add_argument("-w", "--warmup")
 
 
 if __name__ == "__main__":
@@ -172,4 +180,7 @@ if __name__ == "__main__":
         manifold=manifold,
         compile_model=args.compiled,
         compile_optimizer=args.compile_optimizer,
+        active=args.active,
+        warmup=args.warmup,
+        wait=args.wait,
     )
