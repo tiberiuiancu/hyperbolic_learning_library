@@ -105,7 +105,6 @@ def make_resnet(
     kwargs = model_kwargs | {
         "channel_sizes": channels[config],
         "group_depths": depths[config],
-        "num_classes": 10,
     }
 
     if manifold is not None:

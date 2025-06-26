@@ -63,7 +63,6 @@ def profile_training(
         # first step is skipped
         prof.step()
 
-        # todo: allocate mempory after profiler start
         for step, data in tqdm(enumerate(trainloader), total=active + warmup + wait):
             if step >= active + warmup + wait:
                 break
@@ -119,7 +118,7 @@ class ProfileArgs(Tap):
     ]
     dataset: Literal["imagenet", "cifar10", "caltech256"] = "caltech256"
     hyperbolic: bool = False
-    compiled: bool = False
+    compile_model: bool = False
     compile_optimizer: bool = False
     batch_size: int = 64
     mlp_hdims: list[int] = [2**10]
@@ -132,7 +131,7 @@ class ProfileArgs(Tap):
         self.add_argument("model")
         self.add_argument("--dataset", "-d")
         self.add_argument("--hyperbolic", "-H", action="store_true")
-        self.add_argument("--compiled", "-c", action="store_true")
+        self.add_argument("--compile_model", "-c", action="store_true")
         self.add_argument("--batch_size", "-bs")
         self.add_argument("-a", "--active")
         self.add_argument("-w", "--warmup")
@@ -163,13 +162,15 @@ if __name__ == "__main__":
         net = MLP(in_size=in_size, out_size=out_size, hdims=args.mlp_hdims, manifold=manifold)
     elif args.model.startswith("resnet"):
         resnet_config = args.model.removeprefix("resnet")
-        net = make_resnet(resnet_config, manifold=manifold)
+        net = make_resnet(
+            resnet_config, manifold=manifold, in_channels=in0.shape[1], out_size=out_size
+        )
     else:
         raise ValueError(f"Invalid model {args.model}")
 
     config_name = (
         ("h_" if args.hyperbolic else "")
-        + ("c_" if args.compiled else "")
+        + ("c_" if args.compile_model else "")
         + ("co_" if args.compile_optimizer else "")
         + f"{args.model}"
     )
@@ -178,7 +179,7 @@ if __name__ == "__main__":
         trainloader=trainloader,
         config=config_name,
         manifold=manifold,
-        compile_model=args.compiled,
+        compile_model=args.compile_model,
         compile_optimizer=args.compile_optimizer,
         active=args.active,
         warmup=args.warmup,
