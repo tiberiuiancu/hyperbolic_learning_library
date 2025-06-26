@@ -148,7 +148,8 @@ class PoincareResNet(nn.Module):
         group_depths: list[int],
         manifold: PoincareBall,
         block: Type[Union[PoincareResidualBlock, PoincareBottleneckBlock]] = PoincareResidualBlock,
-        num_classes: int = 10,
+        in_channels: int = 3,
+        out_size: int = 10,
         use_midpoint: bool = True,
     ):
         super().__init__()
@@ -158,7 +159,7 @@ class PoincareResNet(nn.Module):
         self.block = block
 
         self.conv = hnn.HConvolution2d(
-            in_channels=3,
+            in_channels=in_channels,
             out_channels=channel_sizes[0],
             kernel_size=7,
             stride=2,
@@ -186,7 +187,7 @@ class PoincareResNet(nn.Module):
 
         self.avg_pool = hnn.HAdaptiveAvgPool2d((1, 1), manifold=manifold)
         self.fc = hnn.HLinear(
-            in_features=channel_sizes[3], out_features=num_classes, manifold=manifold
+            in_features=channel_sizes[3], out_features=out_size, manifold=manifold
         )
 
     def forward(self, x: ManifoldTensor) -> ManifoldTensor:
