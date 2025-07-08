@@ -7,7 +7,7 @@ from torch.profiler import record_function
 from tqdm import tqdm
 
 from benchmark.models.mlp import MLP
-from benchmark.utils import make_resnet, get_dataset
+from benchmark.utils import make_resnet, get_dataset, parameter_count
 from hypll.manifolds import Manifold
 from hypll.manifolds.poincare_ball.curvature import Curvature
 from hypll.manifolds.poincare_ball.manifold import PoincareBall
@@ -18,6 +18,8 @@ from typing import Literal
 from tap import Tap
 
 MAX_NUM_OF_MEM_EVENTS_PER_SNAPSHOT = 100_000
+
+torch._dynamo.config.assume_static_by_default = True
 
 
 def profile_training(
@@ -43,7 +45,7 @@ def profile_training(
     ) as prof:
         model.cuda()
         if compile_model:
-            model = torch.compile(model)
+            model.compile()
 
         criterion = nn.CrossEntropyLoss()
         optimizer = (
@@ -114,7 +116,14 @@ def profile_training(
 
 class ProfileArgs(Tap):
     model: Literal[
-        "resnetmini", "resnet18", "resnet34", "resnet50", "resnet101", "resnet152", "mlp"
+        "resnetmicro",
+        "resnetmini",
+        "resnet18",
+        "resnet34",
+        "resnet50",
+        "resnet101",
+        "resnet152",
+        "mlp",
     ]
     dataset: Literal["imagenet", "cifar10", "caltech256"] = "caltech256"
     hyperbolic: bool = False
@@ -163,10 +172,16 @@ if __name__ == "__main__":
     elif args.model.startswith("resnet"):
         resnet_config = args.model.removeprefix("resnet")
         net = make_resnet(
-            resnet_config, manifold=manifold, in_channels=in0.shape[1], out_size=out_size
+            resnet_config,
+            manifold=manifold,
+            in_channels=in0.shape[1],
+            out_size=out_size,
+            use_midpoint=True,
         )
     else:
         raise ValueError(f"Invalid model {args.model}")
+
+    print(f"Model {args.model} has {parameter_count(net)} parameters")
 
     config_name = (
         ("h_" if args.hyperbolic else "")

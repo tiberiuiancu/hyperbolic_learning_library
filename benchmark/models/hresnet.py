@@ -153,8 +153,8 @@ class PoincareResNet(nn.Module):
         use_midpoint: bool = True,
     ):
         super().__init__()
-        assert len(channel_sizes) == 4 and len(group_depths) == 4
-
+        assert len(channel_sizes) == len(group_depths)
+        assert len(channel_sizes) >= 1, "channel_sizes must have length at least 1"
         self.manifold = manifold
         self.block = block
 
@@ -172,23 +172,24 @@ class PoincareResNet(nn.Module):
         self.relu = hnn.HReLU(manifold=manifold)
         self.maxpool = hnn.HMaxPool2d(kernel_size=3, stride=2, padding=1, manifold=manifold)
 
-        self.group1 = self._make_group(
-            channel_sizes[0], channel_sizes[0], group_depths[0], stride=1, use_midpoint=use_midpoint
-        )
-        self.group2 = self._make_group(
-            channel_sizes[0], channel_sizes[1], group_depths[1], stride=2, use_midpoint=use_midpoint
-        )
-        self.group3 = self._make_group(
-            channel_sizes[1], channel_sizes[2], group_depths[2], stride=2, use_midpoint=use_midpoint
-        )
-        self.group4 = self._make_group(
-            channel_sizes[2], channel_sizes[3], group_depths[3], stride=2, use_midpoint=use_midpoint
-        )
+        self.groups = nn.ModuleList()
+        prev_channels = channel_sizes[0]
+        for i in range(len(channel_sizes)):
+            stride = 1 if i == 0 else 2
+            self.groups.append(
+                self._make_group(
+                    in_channels=prev_channels,
+                    out_channels=channel_sizes[i],
+                    depth=group_depths[i],
+                    stride=stride,
+                    use_midpoint=use_midpoint,
+                )
+            )
+            prev_channels = channel_sizes[i]
 
+        last_channels = channel_sizes[-1]
         self.avg_pool = hnn.HAdaptiveAvgPool2d((1, 1), manifold=manifold)
-        self.fc = hnn.HLinear(
-            in_features=channel_sizes[3], out_features=out_size, manifold=manifold
-        )
+        self.fc = hnn.HLinear(in_features=last_channels, out_features=out_size, manifold=manifold)
 
     def forward(self, x: ManifoldTensor) -> ManifoldTensor:
         x = self.conv(x)
@@ -196,10 +197,8 @@ class PoincareResNet(nn.Module):
         x = self.relu(x)
         x = self.maxpool(x)
 
-        x = self.group1(x)
-        x = self.group2(x)
-        x = self.group3(x)
-        x = self.group4(x)
+        for group in self.groups:
+            x = group(x)
 
         x = self.avg_pool(x)
         x = self.fc(x.squeeze())
@@ -213,6 +212,8 @@ class PoincareResNet(nn.Module):
         stride: int = 1,
         use_midpoint: bool = True,
     ) -> nn.Sequential:
+        if depth == 0:
+            return nn.Sequential()
         downsample = None
         if stride != 1 or in_channels != out_channels:
             downsample = hnn.HConvolution2d(

@@ -1,4 +1,5 @@
 from typing import Literal, Optional, Union
+import numpy as np
 import torch
 import torchvision.transforms as transforms
 
@@ -9,6 +10,7 @@ from torch.utils.data import DataLoader, Subset
 
 from benchmark.models.hresnet import PoincareBottleneckBlock, PoincareResNet, PoincareResidualBlock
 from benchmark.models.resnet import BottleneckBlock, ResNet, ResidualBlock
+from torch import nn
 from hypll.manifolds.poincare_ball.manifold import PoincareBall
 
 
@@ -77,6 +79,7 @@ def make_resnet(
 ) -> Union["ResNet", PoincareResNet]:
     # Define configurations for different ResNet variants
     channels = {
+        "micro": [4, 4, 4, 4],
         "mini": [16, 32, 64, 128],
         "18": [64, 128, 256, 512],
         "34": [64, 128, 256, 512],
@@ -86,6 +89,7 @@ def make_resnet(
     }
 
     depths = {
+        "micro": [1, 1, 1, 1],
         "mini": [1, 1, 1, 1],
         "18": [2, 2, 2, 2],
         "34": [3, 4, 6, 3],
@@ -124,3 +128,8 @@ def make_resnet(
             }
         )
         return ResNet(**kwargs)
+
+
+def parameter_count(model: nn.Module) -> int:
+    model_parameters = filter(lambda p: p.requires_grad, model.parameters())
+    return sum([np.prod(p.size()) for p in model_parameters])
