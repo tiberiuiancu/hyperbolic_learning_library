@@ -39,7 +39,7 @@ def get_dataset(
             transforms.Resize((256, 256)),
             transforms.CenterCrop(224),
             transforms.ToTensor(),
-            transforms.Grayscale(),
+            transforms.Grayscale(),  # Convert all datasets to single channel
             transforms.Normalize(mean=[0.45], std=[0.225]),
         ]
     else:

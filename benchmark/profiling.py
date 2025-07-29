@@ -114,6 +114,40 @@ def profile_training(
     torch.cuda.memory._record_memory_history(enabled=None)
 
 
+def get_model(args, in_size, out_size, manifold):
+    """
+    Create and return a model based on the provided arguments.
+
+    Args:
+        args: Parsed arguments containing model configuration.
+        in_size: Input size of the model.
+        out_size: Output size of the model.
+        manifold: The manifold to use, if any.
+
+    Returns:
+        A PyTorch model instance.
+
+    Raises:
+        ValueError: If the model type specified in args is invalid.
+    """
+    if args.model == "mlp":
+        return MLP(in_size=in_size, out_size=out_size, hdims=args.mlp_hdims, manifold=manifold)
+    elif args.model.startswith("resnet"):
+        resnet_config = args.model.removeprefix("resnet")
+        # Dynamically determine the number of input channels based on the dataset
+        # Set in_channels to 1 for single-channel processing
+        in_channels = 1
+        return make_resnet(
+            resnet_config,
+            manifold=manifold,
+            in_channels=in_channels,
+            out_size=out_size,
+            use_midpoint=True,
+        )
+    else:
+        raise ValueError(f"Invalid model {args.model}")
+
+
 class ProfileArgs(Tap):
     model: Literal[
         "resnetmicro",
@@ -149,7 +183,6 @@ class ProfileArgs(Tap):
 if __name__ == "__main__":
     args = ProfileArgs().parse_args()
 
-    # load dataset
     trainloader = get_dataset(
         args.dataset,
         args.batch_size,
@@ -157,7 +190,6 @@ if __name__ == "__main__":
         n_samples=10 * args.batch_size,
     )
 
-    # assume classification task
     in0, out0 = next(iter(trainloader))
     in_size = torch.flatten(in0, start_dim=1).shape[-1]
     out_size = out0.shape[-1]
@@ -167,19 +199,7 @@ if __name__ == "__main__":
         PoincareBall(c=Curvature(args.curvature, requires_grad=True)) if args.hyperbolic else None
     )
 
-    if args.model == "mlp":
-        net = MLP(in_size=in_size, out_size=out_size, hdims=args.mlp_hdims, manifold=manifold)
-    elif args.model.startswith("resnet"):
-        resnet_config = args.model.removeprefix("resnet")
-        net = make_resnet(
-            resnet_config,
-            manifold=manifold,
-            in_channels=in0.shape[1],
-            out_size=out_size,
-            use_midpoint=True,
-        )
-    else:
-        raise ValueError(f"Invalid model {args.model}")
+    net = get_model(args, in_size, out_size, manifold)
 
     print(f"Model {args.model} has {parameter_count(net)} parameters")
 
