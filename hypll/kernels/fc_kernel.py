@@ -1,3 +1,4 @@
+import os
 import math
 import triton.testing
 
@@ -311,20 +312,23 @@ def bench_K(B, K, M, c, provider):
 def test_reference():
     """Run a simple correctness test."""
     B, K, M = 256, 128, 64
-    c = torch.tensor(0.1, dtype=torch.float32)
-    x = torch.randn(B, K, dtype=torch.float32)
-    z = torch.randn(K, M, dtype=torch.float32)
-    r = torch.randn(M, dtype=torch.float32)
+    c = torch.tensor(0.1, dtype=torch.float32).cuda()
+    x = torch.randn(B, K, dtype=torch.float32).cuda()
+    z = torch.randn(K, M, dtype=torch.float32).cuda()
+    r = torch.randn(M, dtype=torch.float32).cuda()
 
     y = poincare_fully_connected(x, z, r, c)
     y_ref = poincare_fc_ref(x, z, r, c)
+    y_triton = poincare_fully_connected_triton(x, z, r, c)
 
-    assert torch.allclose(y, y_ref, atol=1e-5, equal_nan=True), (y - y_ref).abs().max().item()
+    assert torch.allclose(y, y_ref, atol=1e-5), (y - y_ref).abs().max().item()
+    assert torch.allclose(y, y_triton, atol=1e-5), (y - y_triton).abs().max().item()
 
 
 if __name__ == "__main__":
-    import os
+    test_reference()
 
+    # Run benchmarks and save plots
     os.makedirs("plots", exist_ok=True)
     bench_B.run(show_plots=False, print_data=True, save_path="./plots/poincare_fc_performance_B")
     bench_M.run(show_plots=False, print_data=True, save_path="./plots/poincare_fc_performance_M")
