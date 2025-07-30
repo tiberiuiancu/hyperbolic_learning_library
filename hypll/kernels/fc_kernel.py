@@ -1,38 +1,38 @@
 import math
-import torch
-import triton
-import triton.language as tl
+import triton.testing
 
 from hypll.manifolds.poincare_ball.math.linalg import poincare_fully_connected
 
-# -------------------------------------------------------------
-#  Autotuning configs
-# -------------------------------------------------------------
+import torch
+import triton
+import triton.language as tl
 
 
 def get_autotune_configs(device=None):
     if device is None:
         device = torch.cuda.current_device()
     cc_major, _ = torch.cuda.get_device_capability(device)
-    stage_set = (1,) if cc_major < 8 else (1, 2)
+    stage_set = (1,) if cc_major < 8 else (1, 2)  # Turing vs Ampere+
 
     # (BLOCK_K, BLOCK_M, num_warps)
     tiles = [
-        (32, 32, 1),
-        (64, 64, 2),
-        (128, 64, 4),
-        (128, 128, 4),
+        (32, 32, 1),  # tiny rows
+        (64, 64, 2),  # mid‑size
+        (128, 64, 4),  # long‑K
+        (128, 128, 4),  # large K & M
     ]
-    cfgs = []
+
+    configs = []
     for bk, bm, w in tiles:
         for s in stage_set:
-            cfgs.append(triton.Config({"BLOCK_K": bk, "BLOCK_M": bm}, num_warps=w, num_stages=s))
-    return cfgs
-
-
-# -------------------------------------------------------------
-#  Hyperbolic helpers
-# -------------------------------------------------------------
+            configs.append(
+                triton.Config(
+                    {"BLOCK_K": bk, "BLOCK_M": bm},
+                    num_warps=w,
+                    num_stages=s,
+                )
+            )
+    return configs
 
 
 @triton.jit
@@ -54,137 +54,121 @@ def cosh(x):
     return 0.5 * (e + ei)
 
 
-# -------------------------------------------------------------
-#  Forward kernel – 2‑D launch grid
-# -------------------------------------------------------------
-
-
-@triton.autotune(configs=get_autotune_configs(), key=["K", "M"])
+@triton.autotune(
+    configs=get_autotune_configs(),
+    key=["K", "M"],
+)
 @triton.jit
-def _poincare_fc_fwd_kernel_opt(
+def _poincare_fc_fwd_kernel(
     X_ptr,  # [B, K]   fp32
-    INV_ZN_ptr,  # [M]      fp32 (1 / ‖z_k‖)
-    XZ_ptr,  # [B, M]   fp32 – x @ z
-    R_ptr,  # [M]      fp32 bias (or dummy)
-    NUM_ptr,  # [B, M]   fp32 – numerator
-    DEN_PTR,  # [B]      fp32 – per‑row accumulator
-    c,  # fp32 curvature
-    two_cs,  # fp32 = 2·sqrt(c)
+    ZN_ptr,  # [M]      fp32 (‖z_k‖)
+    XZ_ptr,  # [B, M]   fp32 – X @ Z
+    R_ptr,  # [M]      fp32 or dummy when no bias
+    numerator_ptr,  # [B, M]   fp32 – output numerator
+    denominator_ptr,  # [B, M]   fp32 – output denominator
+    c,  # fp32  (curvature)
+    c_sqrt,  # fp32  (sqrt(curvature))
     K: tl.constexpr,
     M: tl.constexpr,
     stride_x_batch: tl.constexpr,
     stride_xz_batch: tl.constexpr,
-    stride_num_batch: tl.constexpr,
+    stride_numerator_batch: tl.constexpr,
     HAS_BIAS: tl.constexpr,
     BLOCK_K: tl.constexpr,
     BLOCK_M: tl.constexpr,
 ):
-    """Each program handles a tile (row, BLOCK_M columns)."""
+    """Each program instance handles one output row (batch element)."""
 
-    pid_row = tl.program_id(0)
-    pid_col = tl.program_id(1)
+    row = tl.program_id(0)
 
-    # Column indices for this program
-    col_start = pid_col * BLOCK_M
-    offs_m = tl.arange(0, BLOCK_M)
-    m_ids = col_start + offs_m
-    mask_m = m_ids < M
-
-    # ---------------------------------------------------------
-    #  λ(x): double‑buffered accumulation over K
-    # ---------------------------------------------------------
+    # -------------------------------------------------
+    # 1. compute λ(x) = 2 / (1 - c * ‖x‖²)
+    # -------------------------------------------------
     offs_k = tl.arange(0, BLOCK_K)
-    x_row_ptr = X_ptr + pid_row * stride_x_batch
-
-    # First tile
-    xk = tl.load(x_row_ptr + offs_k, mask=offs_k < K, other=0.0)
-    norm_x_sq = tl.sum(xk * xk, axis=0)
-
-    for k in range(BLOCK_K, K, BLOCK_K):
-        xk = tl.load(x_row_ptr + k + offs_k, mask=k + offs_k < K, other=0.0)
+    x_row_ptr = X_ptr + row * stride_x_batch
+    norm_x_sq = tl.zeros([1], dtype=tl.float32)
+    for k in range(0, K, BLOCK_K):
+        k_ids = k + offs_k
+        mask_k = k_ids < K
+        xk = tl.load(x_row_ptr + k_ids, mask=mask_k, other=0.0)
         norm_x_sq += tl.sum(xk * xk, axis=0)
+    lam = 2.0 / (1.0 - c * norm_x_sq)  # shape [1
 
-    lam = 2.0 / (1.0 - c * norm_x_sq)  # scalar per row
+    denominator_acc = 0.0
+    for m in range(0, M, BLOCK_M):
+        m_ids = tl.arange(0, BLOCK_M) + m
+        mask_m = m_ids < M
+        zn = tl.load(ZN_ptr + m_ids, mask=mask_m, other=1.0)
+        xz = tl.load(XZ_ptr + row * stride_xz_batch + m_ids, mask=mask_m, other=0.0)
 
-    # ---------------------------------------------------------
-    #  Column‑tile operands (cache‑hinted global loads)
-    # ---------------------------------------------------------
-    xz = tl.load(
-        XZ_ptr + pid_row * stride_xz_batch + m_ids, mask=mask_m, other=0.0, cache_modifier=".ca"
-    )
-    inv_zn = tl.load(INV_ZN_ptr + m_ids, mask=mask_m, other=0.0, cache_modifier=".ca")
+        inner = c_sqrt * lam / zn * xz
+        if HAS_BIAS:
+            two_cs_r = 2.0 * c_sqrt * tl.load(R_ptr + m_ids, mask=mask_m, other=0.0)
+            inner = inner * cosh(two_cs_r) - (lam - 1) * sinh(two_cs_r)
 
-    # inv_zn == 0 never happens thanks to host clamp, but avoid div‑by‑0 anyway
-    zn = 1.0 / tl.where(inv_zn == 0.0, 1e-15, inv_zn)
+        v = 2.0 * zn * sinh(inner)
+        numerator = sinh(v) / c_sqrt
 
-    inner = (lam * (two_cs * 0.5)) * (xz * inv_zn)  # sqrt(c)·λ/‖z‖·⟨x,z⟩
+        # write numerator
+        tl.store(numerator_ptr + row * stride_numerator_batch + m_ids, numerator, mask=mask_m)
 
-    if HAS_BIAS:
-        bias = tl.load(R_ptr + m_ids, mask=mask_m, other=0.0, cache_modifier=".ca")
-        two_cs_r = bias * two_cs
-        inner = inner * cosh(two_cs_r) - (lam - 1.0) * sinh(two_cs_r)
+        # accumulate in denominator
+        denominator_acc += tl.sum(numerator * numerator)
 
-    v = 2.0 * zn * asinh(inner)
-    numerator = sinh(v) / (two_cs * 0.5)  # divide by sqrt(c)
+    denominator_acc = 1.0 + tl.sqrt(1.0 + c * denominator_acc)
 
-    # Write numerator tile
-    tl.store(NUM_ptr + pid_row * stride_num_batch + m_ids, numerator, mask=mask_m)
-
-    # Atomic reduction for denominator
-    denom_partial = tl.sum(numerator * numerator, axis=0)
-    tl.atomic_add(DEN_PTR + pid_row, denom_partial)
+    # write denominator
+    tl.store(denominator_ptr + row, denominator_acc)
 
 
-# -------------------------------------------------------------
-#  Host wrapper
-# -------------------------------------------------------------
+# -------------------------------------------------------
+#  Python helper
+# -------------------------------------------------------
 
 
 def poincare_fully_connected_triton(x, z, r=None, c=1.0):
-    """Optimised Poincaré fully‑connected using Triton.
-    Implements fixes (1,2,4,5,7).
-    Args:
-        x : [B, K] fp32 CUDA
-        z : [K, M] fp32 CUDA
-        r : [M]    fp32 CUDA bias or None
-        c : float  curvature
-    Returns:
-        y : [B, M] fp32 CUDA
     """
-    assert x.is_cuda and z.is_cuda, "inputs must be CUDA tensors"
+    Host function to call the Triton Poincare fully connected kernel.
+    Args:
+        x: [B, K] input tensor (fp32, CUDA)
+        z: [K, M] weight tensor (fp32, CUDA)
+        r: [M] bias tensor or None (fp32, CUDA)
+        c: curvature (float or tensor)
+    Returns:
+        Output tensor [B, M] (fp32, CUDA)
+    """
+    assert x.is_cuda and z.is_cuda, "Input tensors must be on CUDA"
     B, K = x.shape
     K2, M = z.shape
-    assert K == K2, "dimension mismatch"
-
+    assert K == K2, "Dimension mismatch"
     dtype = x.dtype
+
+    # Compute required intermediates
     c_val = float(c) if not torch.is_tensor(c) else float(c.item())
-    two_cs = 2.0 * math.sqrt(c_val)
+    c_sqrt = math.sqrt(c_val)
+    zn = z.norm(dim=0).clamp_min(1e-15)  # [M]
+    xz = x @ z  # [B, M]
 
-    # Host‑side pre‑computations
-    zn = z.norm(dim=0).clamp_min(1e-15)
-    inv_zn = 1.0 / zn
-    xz = x @ z
-
+    # Allocate output tensors
     numerator = torch.empty((B, M), device=x.device, dtype=dtype)
-    denom_sq = torch.zeros((B,), device=x.device, dtype=dtype)
+    denominator = torch.empty((B,), device=x.device, dtype=dtype)
 
+    # Prepare bias
     has_bias = r is not None
     if not has_bias:
-        r = torch.empty((M,), device=x.device, dtype=dtype)
+        r = torch.empty((M,), device=x.device, dtype=dtype)  # dummy
 
-    # Launch grid: (rows, column‑tiles)
-    BLOCK_M_MAX = 128  # keep in sync with autotune shapes
-    grid = (B, (M + BLOCK_M_MAX - 1) // BLOCK_M_MAX)
-
-    _poincare_fc_fwd_kernel_opt[grid](
+    # Launch Triton kernel
+    grid = (B,)
+    _poincare_fc_fwd_kernel[grid](
         x,
-        inv_zn,
+        zn,
         xz,
         r,
         numerator,
-        denom_sq,
+        denominator,
         c_val,
-        two_cs,
+        c_sqrt,
         K,
         M,
         x.stride(0),
@@ -193,7 +177,7 @@ def poincare_fully_connected_triton(x, z, r=None, c=1.0):
         HAS_BIAS=has_bias,
     )
 
-    denominator = 1.0 + torch.sqrt(1.0 + c_val * denom_sq)
+    # Final output: numerator / denominator[:, None]
     return numerator / denominator[:, None]
 
 
