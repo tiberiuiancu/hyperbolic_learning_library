@@ -106,7 +106,7 @@ def _poincare_fc_fwd_kernel(
             two_cs_r = 2.0 * c_sqrt * tl.load(R_ptr + m_ids, mask=mask_m, other=0.0)
             inner = inner * cosh(two_cs_r) - (lam - 1) * sinh(two_cs_r)
 
-        v = 2.0 * zn * sinh(inner)
+        v = 2.0 * zn * asinh(inner)
         numerator = sinh(v) / c_sqrt
 
         # write numerator
