@@ -5,7 +5,7 @@ import triton
 import triton.language as tl
 
 
-def get_autotune_configs(device=None):
+def get_autotune_configs_fwd(device=None):
     if device is None:
         device = torch.cuda.current_device()
     cc_major, _ = torch.cuda.get_device_capability(device)
@@ -52,7 +52,7 @@ def cosh(x):
 
 
 @triton.autotune(
-    configs=get_autotune_configs(),
+    configs=get_autotune_configs_fwd(),
     key=["K", "M"],
 )
 @triton.jit
@@ -227,6 +227,37 @@ def _dnum_dx(
     return y
 
 
+def get_autotune_configs_bwd(device=None):
+    if device is None:
+        device = torch.cuda.current_device()
+    cc_major, _ = torch.cuda.get_device_capability(device)
+    stage_set = (1,) if cc_major < 8 else (1, 2)  # Turing vs Ampere+
+
+    # (BLOCK_K, BLOCK_M, num_warps)
+    tiles = [
+        (32, 32, 1),  # tiny rows
+        (64, 64, 2),  # mid‑size
+        (128, 64, 4),  # long‑K
+        (128, 128, 4),  # large K & M
+    ]
+
+    configs = []
+    for bk, bm, w in tiles:
+        for s in stage_set:
+            configs.append(
+                triton.Config(
+                    {"BLOCK_K": bk, "BLOCK_M": bm},
+                    num_warps=w,
+                    num_stages=s,
+                )
+            )
+    return configs
+
+
+@triton.autotune(
+    configs=get_autotune_configs_bwd(),
+    key=["K", "M"],
+)
 @triton.jit
 def _poincare_fc_bwd_dx_kernel(
     x_ptr,  # [B, K] - input
@@ -329,3 +360,56 @@ def _poincare_fc_bwd_dx_kernel(
         out_buf += dy_dx * dout
 
     tl.store(out_ptr + offs_k, out_buf, mask=mask_k)
+
+
+def poincare_fc_bwd_dx_triton(x, z, dout, num, v, inner, lam, den, twocsr, c, has_bias):
+    """
+    Host function to call the Triton backward kernel for input gradients.
+    Args:
+        x: [B, K] input tensor (fp32, CUDA)
+        z: [K, M] weight tensor (fp32, CUDA)
+        dout: [B, M] output gradient (fp32, CUDA)
+        num: [B, M] numerator cache from fwd (fp32, CUDA)
+        v: [B, M] v cache from fwd (fp32, CUDA)
+        inner: [B, M] inner cache from fwd (fp32, CUDA)
+        lam: [B] lambda cache from fwd (fp32, CUDA)
+        den: [B] denominator cache from fwd (fp32, CUDA)
+        twocsr: [M] 2*c_sqrt*bias or dummy (fp32, CUDA)
+        c: curvature (float)
+        has_bias: bool
+    Returns:
+        dx: [B, K] input gradient (fp32, CUDA)
+    """
+    B, K = x.shape
+    K2, M = z.shape
+    assert K == K2
+    BLOCK_K = 32
+    BLOCK_M = 32
+    dx = torch.empty_like(x)
+    grid = (B, (K + BLOCK_K - 1) // BLOCK_K)
+    _poincare_fc_bwd_dx_kernel[grid](
+        x,
+        z,
+        dout,
+        num,
+        v,
+        inner,
+        lam,
+        den,
+        twocsr,
+        c,
+        dx,
+        x.stride(0),
+        z.stride(0),
+        dout.stride(0),
+        num.stride(0),
+        v.stride(0),
+        inner.stride(0),
+        BLOCK_K,
+        BLOCK_M,
+        K,
+        M,
+        B,
+        HAS_BIAS=has_bias,
+    )
+    return dx
