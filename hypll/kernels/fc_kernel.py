@@ -62,7 +62,11 @@ def _poincare_fc_fwd_kernel(
     XZ_ptr,  # [B, M]   fp32 – X @ Z
     R_ptr,  # [M]      fp32 or dummy when no bias
     numerator_ptr,  # [B, M]   fp32 – output numerator
-    denominator_ptr,  # [B, M]   fp32 – output denominator
+    denominator_ptr,  # [B]   fp32 – output denominator
+    v_ptr,  # [B, M]   fp32 – cache for v
+    inner_ptr,  # [B, M]   fp32 – cache for inner
+    lam_ptr,  # [B]   fp32 – cache for lambda
+    twocsr_ptr,  # [M]   fp32 – cache for 2*c_sqrt*bias or dummy
     c,  # fp32  (curvature)
     c_sqrt,  # fp32  (sqrt(curvature))
     K: tl.constexpr,
@@ -70,6 +74,8 @@ def _poincare_fc_fwd_kernel(
     stride_x_batch: tl.constexpr,
     stride_xz_batch: tl.constexpr,
     stride_numerator_batch: tl.constexpr,
+    stride_v_batch: tl.constexpr,
+    stride_inner_batch: tl.constexpr,
     HAS_BIAS: tl.constexpr,
     BLOCK_K: tl.constexpr,
     BLOCK_M: tl.constexpr,
@@ -87,7 +93,8 @@ def _poincare_fc_fwd_kernel(
         mask_k = k_ids < K
         xk = tl.load(x_row_ptr + k_ids, mask=mask_k, other=0.0)
         norm_x_sq += tl.sum(xk * xk, axis=0)
-    lam = 2.0 / (1.0 - c * norm_x_sq)  # shape [1
+    lam = 2.0 / (1.0 - c * norm_x_sq)  # shape [1]
+    tl.store(lam_ptr + row, lam)
 
     # compute numerator and accumulate denominator
     denominator_acc = 0.0
@@ -97,16 +104,23 @@ def _poincare_fc_fwd_kernel(
         zn = tl.load(ZN_ptr + m_ids, mask=mask_m, other=1.0)
         xz = tl.load(XZ_ptr + row * stride_xz_batch + m_ids, mask=mask_m, other=0.0)
 
-        inner = c_sqrt * lam / zn * xz
         if HAS_BIAS:
-            two_cs_r = 2.0 * c_sqrt * tl.load(R_ptr + m_ids, mask=mask_m, other=0.0)
+            r = tl.load(R_ptr + m_ids, mask=mask_m, other=0.0)
+            two_cs_r = 2.0 * c_sqrt * r
+            tl.store(twocsr_ptr + m_ids, two_cs_r, mask=mask_m)
+            inner = c_sqrt * lam / zn * xz
             inner = inner * cosh(two_cs_r) - (lam - 1) * sinh(two_cs_r)
+        else:
+            inner = c_sqrt * lam / zn * xz
+            # twocsr_ptr is a dummy, nothing to store
 
         v = 2.0 * zn * asinh(inner)
         numerator = sinh(v) / c_sqrt
 
-        # write numerator
+        # write caches
         tl.store(numerator_ptr + row * stride_numerator_batch + m_ids, numerator, mask=mask_m)
+        tl.store(v_ptr + row * stride_v_batch + m_ids, v, mask=mask_m)
+        tl.store(inner_ptr + row * stride_inner_batch + m_ids, inner, mask=mask_m)
 
         # accumulate in denominator
         denominator_acc += tl.sum(numerator * numerator)
@@ -126,7 +140,7 @@ def poincare_fully_connected_triton(x, z, r=None, c=1.0):
         r: [M] bias tensor or None (fp32, CUDA)
         c: curvature (float or tensor)
     Returns:
-        Output tensor [B, M] (fp32, CUDA)
+        Tuple: (output [B, M], numerator [B, M], denominator [B], v [B, M], inner [B, M], lam [B], twocsr [M])
     """
     assert x.is_cuda and z.is_cuda, "Input tensors must be on CUDA"
     B, K = x.shape
@@ -140,16 +154,20 @@ def poincare_fully_connected_triton(x, z, r=None, c=1.0):
     zn = z.norm(dim=0).clamp_min(1e-15)  # [M]
     xz = x @ z  # [B, M]
 
-    # Allocate output tensors
+    # Allocate output tensors and caches
     numerator = torch.empty((B, M), device=x.device, dtype=dtype)
     denominator = torch.empty((B,), device=x.device, dtype=dtype)
+    v = torch.empty((B, M), device=x.device, dtype=dtype)
+    inner = torch.empty((B, M), device=x.device, dtype=dtype)
+    lam = torch.empty((B,), device=x.device, dtype=dtype)
+    twocsr = torch.empty((M,), device=x.device, dtype=dtype)
 
     # Prepare bias
     has_bias = r is not None
     if not has_bias:
         r = torch.empty((M,), device=x.device, dtype=dtype)  # dummy
 
-    # Launch Triton kernel
+    # Launch Triton kernel, passing pointers to all outputs
     grid = (B,)
     _poincare_fc_fwd_kernel[grid](
         x,
@@ -158,6 +176,10 @@ def poincare_fully_connected_triton(x, z, r=None, c=1.0):
         r,
         numerator,
         denominator,
+        v,
+        inner,
+        lam,
+        twocsr,
         c_val,
         c_sqrt,
         K,
@@ -165,11 +187,13 @@ def poincare_fully_connected_triton(x, z, r=None, c=1.0):
         x.stride(0),
         xz.stride(0),
         numerator.stride(0),
-        HAS_BIAS=has_bias,
+        v.stride(0),
+        inner.stride(0),
+        has_bias,
     )
 
-    # Final output: numerator / denominator[:, None]
-    return numerator / denominator[:, None]
+    out = numerator / denominator[:, None]
+    return out, (numerator, denominator, v, inner, lam, twocsr)
 
 
 def poincare_fc_fwd_ref(x, z, bias, c):
@@ -284,6 +308,8 @@ def _poincare_fc_bwd_dx_kernel(
     B: tl.constexpr,
     HAS_BIAS: tl.constexpr,
 ):
+    """Each program instance handles BLOCK_K elements of a single input row (batch element)"""
+
     b = tl.program_id(0)
     k = tl.program_id(1) * BLOCK_K
 
@@ -383,10 +409,11 @@ def poincare_fc_bwd_dx_triton(x, z, dout, num, v, inner, lam, den, twocsr, c, ha
     B, K = x.shape
     K2, M = z.shape
     assert K == K2
-    BLOCK_K = 32
-    BLOCK_M = 32
     dx = torch.empty_like(x)
-    grid = (B, (K + BLOCK_K - 1) // BLOCK_K)
+
+    def grid(meta):
+        return (B, triton.cdiv(K, meta['BLOCK_K']))
+
     _poincare_fc_bwd_dx_kernel[grid](
         x,
         z,
@@ -405,11 +432,9 @@ def poincare_fc_bwd_dx_triton(x, z, dout, num, v, inner, lam, den, twocsr, c, ha
         num.stride(0),
         v.stride(0),
         inner.stride(0),
-        BLOCK_K,
-        BLOCK_M,
         K,
-        M,
-        B,
+        z.shape[1],
+        x.shape[0],
         HAS_BIAS=has_bias,
     )
     return dx
