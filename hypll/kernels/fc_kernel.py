@@ -84,20 +84,21 @@ def _poincare_fc_fwd_kernel(
 
     row = tl.program_id(0)
 
+    X_ptr += row * stride_x_batch
+
     # 1. compute lambda
     offs_k = tl.arange(0, BLOCK_K)
-    x_row_ptr = X_ptr + row * stride_x_batch
-    norm_x_sq = tl.zeros([1], dtype=tl.float32)
+    norm_x_sq = 0.0
     for k in range(0, K, BLOCK_K):
-        k_ids = k + offs_k
-        mask_k = k_ids < K
-        xk = tl.load(x_row_ptr + k_ids, mask=mask_k, other=0.0)
+        mask_k = offs_k < K
+        xk = tl.load(X_ptr + offs_k, mask=mask_k, other=0.0)
         norm_x_sq += tl.sum(xk * xk, axis=0)
+        offs_k += BLOCK_K
     lam = 2.0 / (1.0 - c * norm_x_sq)  # shape [1]
     tl.store(lam_ptr + row, lam)
 
     # compute numerator and accumulate denominator
-    denominator_acc = 0.0
+    den_acc = 0.0
     for m in range(0, M, BLOCK_M):
         m_ids = tl.arange(0, BLOCK_M) + m
         mask_m = m_ids < M
@@ -112,23 +113,22 @@ def _poincare_fc_fwd_kernel(
             inner = inner * cosh(two_cs_r) - (lam - 1) * sinh(two_cs_r)
         else:
             inner = c_sqrt * lam / zn * xz
-            # twocsr_ptr is a dummy, nothing to store
 
         v = 2.0 * zn * asinh(inner)
-        numerator = sinh(v) / c_sqrt
+        num = sinh(v) / c_sqrt
+
+        den_acc += c * tl.sum(num * num)
 
         # write caches
-        tl.store(numerator_ptr + row * stride_numerator_batch + m_ids, numerator, mask=mask_m)
+        tl.store(numerator_ptr + row * stride_numerator_batch + m_ids, num, mask=mask_m)
         tl.store(v_ptr + row * stride_v_batch + m_ids, v, mask=mask_m)
         tl.store(inner_ptr + row * stride_inner_batch + m_ids, inner, mask=mask_m)
 
-        # accumulate in denominator
-        denominator_acc += tl.sum(numerator * numerator)
-
-    denominator_acc = 1.0 + tl.sqrt(1.0 + c * denominator_acc)
+    # accumulate in denominator
+    den = 1.0 + tl.sqrt(1.0 + den_acc)
 
     # write denominator
-    tl.store(denominator_ptr + row, denominator_acc)
+    tl.store(denominator_ptr + row, den)
 
 
 def poincare_fully_connected_triton(x, z, r=None, c=1.0):
@@ -138,7 +138,7 @@ def poincare_fully_connected_triton(x, z, r=None, c=1.0):
         x: [B, K] input tensor (fp32, CUDA)
         z: [K, M] weight tensor (fp32, CUDA)
         r: [M] bias tensor or None (fp32, CUDA)
-        c: curvature (float or tensor)
+        c: curvature (tensor or float)
     Returns:
         Tuple: (output [B, M], numerator [B, M], denominator [B], v [B, M], inner [B, M], lam [B], twocsr [M])
     """
@@ -155,8 +155,8 @@ def poincare_fully_connected_triton(x, z, r=None, c=1.0):
     xz = x @ z  # [B, M]
 
     # Allocate output tensors and caches
-    numerator = torch.empty((B, M), device=x.device, dtype=dtype)
-    denominator = torch.empty((B,), device=x.device, dtype=dtype)
+    num = torch.empty((B, M), device=x.device, dtype=dtype)
+    den = torch.empty((B,), device=x.device, dtype=dtype)
     v = torch.empty((B, M), device=x.device, dtype=dtype)
     inner = torch.empty((B, M), device=x.device, dtype=dtype)
     lam = torch.empty((B,), device=x.device, dtype=dtype)
@@ -174,8 +174,8 @@ def poincare_fully_connected_triton(x, z, r=None, c=1.0):
         zn,
         xz,
         r,
-        numerator,
-        denominator,
+        num,
+        den,
         v,
         inner,
         lam,
@@ -186,14 +186,14 @@ def poincare_fully_connected_triton(x, z, r=None, c=1.0):
         M,
         x.stride(0),
         xz.stride(0),
-        numerator.stride(0),
+        num.stride(0),
         v.stride(0),
         inner.stride(0),
         has_bias,
     )
 
-    out = numerator / denominator[:, None]
-    return out, (numerator, denominator, v, inner, lam, twocsr)
+    out = num / den[:, None]
+    return out, (num, v, inner, lam, den, twocsr)
 
 
 def poincare_fc_fwd_ref(x, z, bias, c):
@@ -221,9 +221,11 @@ def poincare_fc_fwd_ref(x, z, bias, c):
     v = 2 * z_norm * torch.asinh(inner)
     num = torch.sinh(v) / c_sqrt
     den = 1 + torch.sqrt(1 + c * num.pow(2).sum(-1, keepdim=True))  # shape [B, 1]
-    return num / den
+    out = num / den
+    return out, (num, v, inner, lam.squeeze(), den, two_cs_r)
 
 
+# TODO: pass sinh_twocsr as a parameter to avoid recomputing it
 @triton.jit
 def _dnum_dx(
     x,  # [BLOCK_K] - loaded slice of input
@@ -232,7 +234,8 @@ def _dnum_dx(
     inner,  # [BLOCK_M]
     twocsr,  # [BLOCK_M]
     lam,  # scalar
-    HAS_BIAS: tl.constexpr,
+    c,  # scalar
+    HAS_BIAS,
 ):
     # broadcast all vectors
     x = x[:, None]
@@ -301,12 +304,12 @@ def _poincare_fc_bwd_dx_kernel(
     num_stride_b: tl.constexpr,
     v_stride_b: tl.constexpr,
     inner_stride_b: tl.constexpr,
-    BLOCK_K: tl.constexpr,
-    BLOCK_M: tl.constexpr,
     K: tl.constexpr,
     M: tl.constexpr,
     B: tl.constexpr,
     HAS_BIAS: tl.constexpr,
+    BLOCK_K: tl.constexpr,
+    BLOCK_M: tl.constexpr,
 ):
     """Each program instance handles BLOCK_K elements of a single input row (batch element)"""
 
@@ -338,7 +341,7 @@ def _poincare_fc_bwd_dx_kernel(
         mask_z = (offs_k[:, None] < K) & (offs_m[None, :] < M)
 
         # load data
-        mask_m = offs < M
+        mask_m = offs_m < M
         num = tl.load(num_ptr + offs_m, mask=mask_m)
         v = tl.load(v_ptr + offs_m, mask=mask_m)
         inner = tl.load(inner_ptr + offs_m, mask=mask_m)
@@ -348,10 +351,9 @@ def _poincare_fc_bwd_dx_kernel(
             twocsr = tl.load(twocsr_ptr + offs_m, mask=mask_m)
 
         # calculate derivative of num w.r.t. x
-        d = _dnum_dx(x, v, z, inner, twocsr, lam, HAS_BIAS)  # shape [BLOCK_K, BLOCK_M]
+        d = _dnum_dx(x, v, z, inner, twocsr, lam, c, HAS_BIAS)  # shape [BLOCK_K, BLOCK_M]
 
-        # aggregate the sum over M dimension, multiply by num
-        sum_buf += tl.sum(d, axis=1) * num
+        sum_buf += tl.sum(d * num, axis=1)
 
         # increment offsets
         offs_m += BLOCK_M
@@ -362,14 +364,14 @@ def _poincare_fc_bwd_dx_kernel(
     c_den_1 = c / (den - 1)
 
     offs_m = tl.arange(0, BLOCK_M)
-    out_buf = tl.zeros([BLOCK_K], dtype=tf.float32)
+    out_buf = tl.zeros([BLOCK_K], dtype=tl.float32)
     for m in range(0, M, BLOCK_M):
         # calculate z offsets
         offs_z = offs_k[:, None] * z_stride_k + offs_m[None, :]
         mask_z = (offs_k[:, None] < K) & (offs_m[None, :] < M)
 
         # load data
-        mask_m = offs < M
+        mask_m = offs_m < M
         dout = tl.load(dout_ptr + offs_m, mask=mask_m)
         num = tl.load(num_ptr + offs_m, mask=mask_m)
         v = tl.load(v_ptr + offs_m, mask=mask_m)
@@ -377,13 +379,13 @@ def _poincare_fc_bwd_dx_kernel(
         z = tl.load(z_ptr + offs_z, mask=mask_z)
         twocsr = num
         if HAS_BIAS:
-            twocsr = tl.load(twocsr_ptr + offs_m, mask=mask_m)
+            twocsr = tl.load(twocsr_ptr + offs_m)
 
-        d = _dnum_dx(x, v, z, inner, twocsr, lam, HAS_BIAS)
-        dy_dx = den_inv * d - c_den_1 * num[None, :] * sum_buf[:, None]
+        d = _dnum_dx(x, v, z, inner, twocsr, lam, c, HAS_BIAS)
+        dy_dx = den_inv * d - c_den_1 * num[None, :] * sum_buf[:, None]  # shape [BLOCK_K, BLOCK_M]
 
         # aggregate sum over M dim, multiply by dout
-        out_buf += dy_dx * dout
+        out_buf += tl.sum(dy_dx * dout, axis=1)
 
     tl.store(out_ptr + offs_k, out_buf, mask=mask_k)
 
@@ -407,12 +409,14 @@ def poincare_fc_bwd_dx_triton(x, z, dout, num, v, inner, lam, den, twocsr, c, ha
         dx: [B, K] input gradient (fp32, CUDA)
     """
     B, K = x.shape
-    K2, M = z.shape
+    K2, _ = z.shape
     assert K == K2
     dx = torch.empty_like(x)
 
+    c_val = float(c) if not torch.is_tensor(c) else float(c.item())
+
     def grid(meta):
-        return (B, triton.cdiv(K, meta['BLOCK_K']))
+        return (B, triton.cdiv(K, meta["BLOCK_K"]))
 
     _poincare_fc_bwd_dx_kernel[grid](
         x,
@@ -424,7 +428,7 @@ def poincare_fc_bwd_dx_triton(x, z, dout, num, v, inner, lam, den, twocsr, c, ha
         lam,
         den,
         twocsr,
-        c,
+        c_val,
         dx,
         x.stride(0),
         z.stride(0),
@@ -438,3 +442,26 @@ def poincare_fc_bwd_dx_triton(x, z, dout, num, v, inner, lam, den, twocsr, c, ha
         HAS_BIAS=has_bias,
     )
     return dx
+
+
+class PoincareFCLayer(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x, z, r=None, c=1.0):
+        # Call the Triton forward kernel
+        out, (num, v, inner, lam, den, twocsr) = poincare_fully_connected_triton(x, z, r, c)
+        ctx.save_for_backward(x, z, num, v, inner, lam, den, twocsr)
+        ctx.has_bias = r is not None
+        ctx.c = c
+        return out
+
+    @staticmethod
+    def backward(ctx, dout):
+        x, z, num, v, inner, lam, den, twocsr = ctx.saved_tensors
+        c = ctx.c
+        has_bias = ctx.has_bias
+        # Compute input gradient
+        dx = poincare_fc_bwd_dx_triton(x, z, dout, num, v, inner, lam, den, twocsr, c, has_bias)
+        # TODO: implement dz and dbias
+        dz = torch.empty((z.shape[0], dout.shape[1]), device=x.device, dtype=x.dtype)  # dummy
+        dbias = torch.empty((dout.shape[1],), device=x.device, dtype=x.dtype) if has_bias else None
+        return dx, dz, dbias, None
