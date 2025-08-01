@@ -115,6 +115,10 @@ def _poincare_fc_fwd_kernel(
             inner = c_sqrt * lam / zn * xz
 
         v = 2.0 * zn * asinh(inner)
+        # TODO: decide which way to calculate num
+        # TODO: store cosh(v) for backward pass
+        # tmp = tl.exp(2.0 * zn * tl.log(inner + tl.sqrt(inner * inner + 1)))
+        # num = (tmp - 1 / tmp) / 2 / c_sqrt
         num = sinh(v) / c_sqrt
 
         den_acc += c * tl.sum(num * num)
@@ -212,17 +216,18 @@ def poincare_fc_fwd_ref(x, z, bias, c):
     z_norm = z.norm(dim=0).clamp_min(1e-15)  # shape [M]
 
     inner_tmp = c_sqrt * lam / z_norm * (x @ z)  # shape [B, M]
+
+    two_cs_r = None
+    inner = inner_tmp
     if bias is not None:
         two_cs_r = 2.0 * c_sqrt * bias
         inner = inner_tmp * torch.cosh(two_cs_r) - (lam - 1) * torch.sinh(two_cs_r)
-    else:
-        inner = inner_tmp
 
     v = 2 * z_norm * torch.asinh(inner)
     num = torch.sinh(v) / c_sqrt
     den = 1 + torch.sqrt(1 + c * num.pow(2).sum(-1, keepdim=True))  # shape [B, 1]
     out = num / den
-    return out, (num, v, inner, lam.squeeze(), den, two_cs_r)
+    return out, (num, v, inner, lam.squeeze(), den.squeeze(), two_cs_r)
 
 
 # TODO: pass sinh_twocsr as a parameter to avoid recomputing it
@@ -411,8 +416,18 @@ def poincare_fc_bwd_dx_triton(x, z, dout, num, v, inner, lam, den, twocsr, c, ha
     B, K = x.shape
     K2, _ = z.shape
     assert K == K2
-    dx = torch.empty_like(x)
 
+    assert x.is_contiguous()
+    assert z.is_contiguous()
+    assert dout.is_contiguous()
+    assert num.is_contiguous()
+    assert v.is_contiguous()
+    assert inner.is_contiguous()
+    assert lam.is_contiguous()
+    assert den.is_contiguous()
+    assert twocsr is None or twocsr.is_contiguous()
+
+    dx = torch.empty_like(x)
     c_val = float(c) if not torch.is_tensor(c) else float(c.item())
 
     def grid(meta):
@@ -447,7 +462,6 @@ def poincare_fc_bwd_dx_triton(x, z, dout, num, v, inner, lam, den, twocsr, c, ha
 class PoincareFCLayer(torch.autograd.Function):
     @staticmethod
     def forward(ctx, x, z, r=None, c=1.0):
-        # Call the Triton forward kernel
         out, (num, v, inner, lam, den, twocsr) = poincare_fully_connected_triton(x, z, r, c)
         ctx.save_for_backward(x, z, num, v, inner, lam, den, twocsr)
         ctx.has_bias = r is not None
@@ -459,7 +473,6 @@ class PoincareFCLayer(torch.autograd.Function):
         x, z, num, v, inner, lam, den, twocsr = ctx.saved_tensors
         c = ctx.c
         has_bias = ctx.has_bias
-        # Compute input gradient
         dx = poincare_fc_bwd_dx_triton(x, z, dout, num, v, inner, lam, den, twocsr, c, has_bias)
         # TODO: implement dz and dbias
         dz = torch.empty((z.shape[0], dout.shape[1]), device=x.device, dtype=x.dtype)  # dummy
