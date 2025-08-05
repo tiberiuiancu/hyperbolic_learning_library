@@ -54,23 +54,23 @@ def _dnum_dx(
     z_ids = (k_ids * stride_z_k)[:, None] + m_ids[None, :]
 
     # load values
-    zn = tl.load(ZN_ptr + m_ids, mask=mask_m)
-    xz = tl.load(XZ_ptr + m_ids, mask=mask_m)
-    z = tl.load(Z_ptr + z_ids, mask=mask_z)
+    zn = tl.load(ZN_ptr + m_ids, mask=mask_m, other=1.0)
+    xz = tl.load(XZ_ptr + m_ids, mask=mask_m, other=0.0)
+    z = tl.load(Z_ptr + z_ids, mask=mask_z, other=0.0)
     b = tl.zeros((BLOCK_M,), dtype=tl.float32)
     if HAS_BIAS:
-        b = tl.load(B_ptr + m_ids, mask=mask_m)
+        b = tl.load(B_ptr + m_ids, mask=mask_m, other=0.0)
 
     _sq_p2_1, ed, num = _single_block_fwd(b, lam, zn, xz, cs, HAS_BIAS)
 
     # waste a few FLOPS when no bias present, negligible
     eb = tl.exp(b)
     ebi = 1 / eb
-    _frac = (eb + ebi) / (2 * zn)
-    _dp_dx_row = _frac * xz - (eb - ebi)
+    _frac = cs * (eb + ebi) / (2 * zn)
+    _dp_dx_row = _frac * xz - (eb - ebi) * 0.5
     dp_dx = dlam_dx[:, None] * _dp_dx_row[None, :] + _frac * lam * z
 
-    _dnum_dx_row = (ed + (1 / ed)) / cs * zn / (_sq_p2_1)
+    _dnum_dx_row = (ed + (1 / ed)) / cs * zn / _sq_p2_1
     dnum_dx = _dnum_dx_row[None, :] * dp_dx
 
     return num, dnum_dx
@@ -142,7 +142,7 @@ def _poincare_fc_bwd_kernel(
             HAS_BIAS,
             BLOCK_M,
         )
-        dden_dx += tl.sum(num * dnum_dx, axis=1)
+        dden_dx += tl.sum(num[None, :] * dnum_dx, axis=1)
         m_ids += BLOCK_M
 
     # finish den derivative computation
@@ -170,17 +170,13 @@ def _poincare_fc_bwd_kernel(
         )
 
         mask_m = m_ids < M
-        dout = tl.load(dout_ptr + m_ids, mask=mask_m)
+        dout = tl.load(dout_ptr + m_ids, mask=mask_m, other=0.0)
 
-        # _t1 = den * dnum_dx
-        # _t2 = dden_dx[:, None] * num[None, :]
-        # dy_dx = (t1 - t2) / (den * den)
-        # out += tl.sum(dout[None, :] * dy_dx, axis=1)
-        # we can reduce the number of operations by first multiplying, then summing:
-        _t1 = den * tl.sum(dout[None, :] * dnum_dx, axis=1)  # [K,]
-        _t2 = dden_dx * tl.sum(dout * num)  # [K,]
-        iden = 1.0 / den
-        out += _t1 * iden - _t2 * iden * iden
+        iden = 1 / den
+        _t1 = dnum_dx * iden
+        _t2 = dden_dx[:, None] * num[None, :] * iden * iden
+        dy_dx = _t1 - _t2
+        out += tl.sum(dout[None, :] * dy_dx, axis=1)
 
         m_ids += BLOCK_M
 

@@ -184,7 +184,7 @@ def poincare_fc_fwd_triton(x, z, r=None, c=1.0, return_cache: bool = False):
     out = num / den[:, None]
 
     if return_cache:
-        return out, (x, z, xz, zn, b, lam, den, c, cs, has_bias)
+        return out, (x, z, xz, zn, b, lam, den, c, cs)
     return out
 
 
