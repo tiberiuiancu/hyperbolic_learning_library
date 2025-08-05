@@ -6,6 +6,8 @@ from hypll.kernels.fc_fwd_kernel import (
     poincare_fc_fwd_triton,
 )
 from hypll.manifolds.poincare_ball.math.linalg import poincare_fully_connected
+from hypll.kernels.fc_layer import PoincareFCLayer
+
 import pytest
 
 RTOL = 1e-3
@@ -62,24 +64,24 @@ def test_fwd(bias_flag: bool):
     assert_allclose(y, y_triton)
 
 
-# @pytest.mark.parametrize("bias_flag", [False, True])
-# def test_poincare_fc_autograd_backward(bias_flag: bool):
-#     torch.manual_seed(0)
-#     B, K, M = 8, 16, 32
-#     c = torch.tensor(0.1, dtype=torch.float32, requires_grad=False).cuda()
+@pytest.mark.parametrize("bias_flag", [False, True])
+def test_bwd(bias_flag: bool):
+    torch.manual_seed(0)
+    B, K, M = 8, 16, 32
+    c = torch.tensor(0.1, dtype=torch.float32, requires_grad=False).cuda()
 
-#     x = _rand(B, K, grad=True)
-#     z = _rand(K, M, grad=True)
-#     r = _rand(M, grad=True) if bias_flag else None
+    x = _rand(B, K, grad=True)
+    z = _rand(K, M, grad=True)
+    r = _rand(M, grad=True) if bias_flag else None
 
-#     inputs = (x, z, r, c) if bias_flag else (x, z, None, c)
-#     inputs = tuple(inp for inp in inputs if inp is not None)
+    inputs = (x, z, r, c) if bias_flag else (x, z, None, c)
+    inputs = tuple(inp for inp in inputs if inp is not None)
 
-#     assert torch.autograd.gradcheck(
-#         PoincareFCLayer.apply,
-#         inputs,
-#         eps=EPS,
-#         atol=ATOL,
-#         rtol=RTOL,
-#         nondet_tol=NONDET_TOL,
-#     ), "Gradcheck failed for Poincare FC layer"
+    assert torch.autograd.gradcheck(
+        PoincareFCLayer.apply,
+        inputs,
+        eps=EPS,
+        atol=ATOL,
+        rtol=RTOL,
+        nondet_tol=NONDET_TOL,
+    ), "Gradcheck failed for Poincare FC layer"
