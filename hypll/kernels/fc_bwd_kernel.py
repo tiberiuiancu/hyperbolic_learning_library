@@ -14,9 +14,9 @@ def get_autotune_configs(device=None):
     # (BLOCK_K, BLOCK_M, num_warps)
     tiles = [
         (32, 32, 1),  # tiny rows
-        (64, 64, 2),  # mid‑size
-        (128, 64, 4),  # long‑K
-        (128, 128, 4),  # large K & M
+        # (64, 64, 2),  # mid‑size
+        # (128, 64, 4),  # long‑K
+        # (128, 128, 4),  # large K & M
     ]
 
     configs = []
@@ -46,32 +46,24 @@ def _dnum_dx(
     M,
     K,
     stride_z_k,
-    HAS_BIAS: tl.constexpr,
-    BLOCK_M: tl.constexpr,
 ):
     mask_m = m_ids < M
-    mask_z = (k_ids[:, None] < K) & mask_m[None, :]
+    mask_k = k_ids < K
+    mask_z = mask_k[:, None] & mask_m[None, :]
     z_ids = (k_ids * stride_z_k)[:, None] + m_ids[None, :]
 
     # load values
     zn = tl.load(ZN_ptr + m_ids, mask=mask_m, other=1.0)
     xz = tl.load(XZ_ptr + m_ids, mask=mask_m, other=0.0)
     z = tl.load(Z_ptr + z_ids, mask=mask_z, other=0.0)
-    b = tl.zeros((BLOCK_M,), dtype=tl.float32)
-    if HAS_BIAS:
-        b = tl.load(B_ptr + m_ids, mask=mask_m, other=0.0)
+    b = tl.load(B_ptr + m_ids, mask=mask_m, other=0.0)
 
-    _sq_p2_1, ed, num = _single_block_fwd(b, lam, zn, xz, cs, HAS_BIAS)
+    sq_p2_1, eb, ebi, ed, edi, num = _single_block_fwd(b, lam, zn, xz, cs)
 
-    # waste a few FLOPS when no bias present, negligible
-    eb = tl.exp(b)
-    ebi = 1 / eb
-    _frac = cs * (eb + ebi) / (2 * zn)
-    _dp_dx_row = _frac * xz - (eb - ebi) * 0.5
-    dp_dx = dlam_dx[:, None] * _dp_dx_row[None, :] + _frac * lam * z
+    _frac = cs * (eb + ebi) / zn
+    dp_dx = 0.5 * (_frac[None, :] * (xz[None, :] * dlam_dx + lam * z) - (eb - ebi) * dlam_dx)
 
-    _dnum_dx_row = (ed + (1 / ed)) / cs * zn / _sq_p2_1
-    dnum_dx = _dnum_dx_row[None, :] * dp_dx
+    dnum_dx = (ed + edi) / cs * zn / sq_p2_1 * dp_dx
 
     return num, dnum_dx
 
@@ -87,8 +79,8 @@ def _poincare_fc_bwd_kernel(
     XZ_ptr,  # [B, M]
     ZN_ptr,  # [M]      fp32 (‖z_k‖)
     B_ptr,  # [M]      fp32 or dummy when no bias; = 2 * cs * r
-    den_ptr,  # [B]   fp32 – denominator cache
     lam_ptr,  # [B]   fp32 – lambda cache
+    den_ptr,  # [B]   fp32 – denominator cache
     dout_ptr,  # [B, M]
     out_ptr,  # [B, K]   fp32 - pointer where to write output derivative
     c,  # fp32  (curvature)
@@ -100,7 +92,6 @@ def _poincare_fc_bwd_kernel(
     stride_xz_b: tl.constexpr,
     stride_z_k: tl.constexpr,
     stride_dout_b: tl.constexpr,
-    HAS_BIAS: tl.constexpr,
     BLOCK_K: tl.constexpr,
     BLOCK_M: tl.constexpr,
 ):
@@ -112,14 +103,16 @@ def _poincare_fc_bwd_kernel(
     out_ptr += row * stride_out_b
     XZ_ptr += row * stride_xz_b
     dout_ptr += row * stride_dout_b
+    lam_ptr += row
+    den_ptr += row
 
     k_ids = col * BLOCK_K + tl.arange(0, BLOCK_K)
     mask_k = k_ids < K
 
     # load values for the entire kernel execution
-    x = tl.load(X_ptr + k_ids, mask=mask_k)
-    lam = tl.load(lam_ptr + row)
-    den = tl.load(den_ptr + row)
+    x = tl.load(X_ptr + k_ids, mask=mask_k, other=0.0)
+    lam = tl.load(lam_ptr)
+    den = tl.load(den_ptr)
     dlam_dx = c * lam * lam * x
 
     # pre-compute derivative of den_b w.r.t. x[b, k:k+BLOCK_K]
@@ -139,9 +132,8 @@ def _poincare_fc_bwd_kernel(
             M,
             K,
             stride_z_k,
-            HAS_BIAS,
-            BLOCK_M,
         )
+
         dden_dx += tl.sum(num[None, :] * dnum_dx, axis=1)
         m_ids += BLOCK_M
 
@@ -165,8 +157,6 @@ def _poincare_fc_bwd_kernel(
             M,
             K,
             stride_z_k,
-            HAS_BIAS,
-            BLOCK_M,
         )
 
         mask_m = m_ids < M
@@ -180,10 +170,10 @@ def _poincare_fc_bwd_kernel(
 
         m_ids += BLOCK_M
 
-    tl.store(out_ptr + k_ids, out)
+    tl.store(out_ptr + k_ids, out, mask=mask_k)
 
 
-def poincare_fc_bwd_triton(dout, x, z, xz, zn, b, den, lam, c, cs, has_bias):
+def poincare_fc_bwd_triton(dout, x, z, xz, zn, b, lam, den, c, cs):
     # TODO: sanity checks
     B, K = x.shape
     _, M = z.shape
@@ -199,8 +189,8 @@ def poincare_fc_bwd_triton(dout, x, z, xz, zn, b, den, lam, c, cs, has_bias):
         xz,
         zn,
         b,
-        den,
         lam,
+        den,
         dout,
         out,
         c,
@@ -212,7 +202,6 @@ def poincare_fc_bwd_triton(dout, x, z, xz, zn, b, den, lam, c, cs, has_bias):
         xz.stride(0),
         z.stride(0),
         dout.stride(0),
-        has_bias,
     )
 
     return out

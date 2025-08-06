@@ -40,20 +40,19 @@ def _single_block_fwd(
     zn,
     xz,
     cs,
-    HAS_BIAS: tl.constexpr,
 ):
-    p = cs * lam / zn * xz
-    if HAS_BIAS:
-        eb = tl.exp(b)
-        ebi = 1 / eb
-        p = 0.5 * ((eb + ebi) * p - (eb - ebi) * (lam - 1))
+    p0 = cs * lam / zn * xz
+    eb = tl.exp(b)
+    ebi = 1 / eb
+    p = 0.5 * ((eb + ebi) * p0 - (eb - ebi) * (lam - 1))
 
     _sq_p2_1 = tl.sqrt(p * p + 1)
     d = 2.0 * zn * tl.log(p + _sq_p2_1)
     ed = tl.exp(d)
-    num = (ed - 1 / ed) / (2 * cs)
+    edi = 1 / ed
+    num = 0.5 * (ed - edi) / cs
 
-    return _sq_p2_1, ed, num
+    return _sq_p2_1, eb, ebi, ed, edi, num
 
 
 @triton.autotune(
@@ -76,7 +75,6 @@ def _poincare_fc_fwd_kernel(
     stride_x_b: tl.constexpr,
     stride_xz_b: tl.constexpr,
     stride_num_b: tl.constexpr,
-    HAS_BIAS: tl.constexpr,
     BLOCK_K: tl.constexpr,
     BLOCK_M: tl.constexpr,
 ):
@@ -88,8 +86,7 @@ def _poincare_fc_fwd_kernel(
     X_ptr += row * stride_x_b
     num_ptr += row * stride_num_b
     XZ_ptr += row * stride_xz_b
-
-    _dummy = 0.0
+    lam_ptr += row
 
     # 1. compute lambda
     offs_k = tl.arange(0, BLOCK_K)
@@ -100,7 +97,7 @@ def _poincare_fc_fwd_kernel(
         norm_x_sq += tl.sum(xk * xk)
         offs_k += BLOCK_K
     lam = 2.0 / (1.0 - c * norm_x_sq)  # shape [1]
-    tl.store(lam_ptr + row, lam)
+    tl.store(lam_ptr, lam)
 
     # compute numerator and accumulate denominator
     den_acc = 0.0
@@ -109,12 +106,10 @@ def _poincare_fc_fwd_kernel(
         mask_m = m_ids < M
         zn = tl.load(ZN_ptr + m_ids, mask=mask_m, other=1.0)
         xz = tl.load(XZ_ptr + m_ids, mask=mask_m, other=0.0)
-        b = _dummy
-        if HAS_BIAS:
-            b = tl.load(B_ptr + m_ids, mask=mask_m, other=0.0)
+        b = tl.load(B_ptr + m_ids, mask=mask_m, other=0.0)
 
         # we only need num
-        _1, _2, num = _single_block_fwd(b, lam, zn, xz, cs, HAS_BIAS)
+        _1, _2, _3, _4, _5, num = _single_block_fwd(b, lam, zn, xz, cs)
 
         den_acc += tl.sum(num * num)
 
@@ -151,15 +146,14 @@ def poincare_fc_fwd_triton(x, z, r=None, c=1.0, return_cache: bool = False):
     xz = x @ z  # [B, M]
 
     # Allocate output tensors and caches
-    num = torch.empty((B, M), device=x.device, dtype=dtype)
-    den = torch.empty((B,), device=x.device, dtype=dtype)
-    lam = torch.empty((B,), device=x.device, dtype=dtype)
+    num = torch.empty((B, M), dtype=torch.float32).cuda()
+    den = torch.empty((B,), dtype=torch.float32).cuda()
+    lam = torch.empty((B,), dtype=torch.float32).cuda()
 
     # Prepare bias
-    has_bias = r is not None
-    b = torch.zeros((M,)).cuda()  # dummy
-    if has_bias:
-        b = 2 * cs * r
+    if r is None:
+        r = torch.zeros((M,)).cuda()  # dummy
+    b = 2 * cs * r
 
     # Launch Triton kernel, passing pointers to all outputs
     grid = (B,)
@@ -178,7 +172,6 @@ def poincare_fc_fwd_triton(x, z, r=None, c=1.0, return_cache: bool = False):
         x.stride(0),
         xz.stride(0),
         num.stride(0),
-        has_bias,
     )
 
     out = num / den[:, None]
@@ -204,12 +197,12 @@ def poincare_fc_fwd_ref(
     xz = torch.matmul(x, z)
     p = (cs * lam / zn) * xz
 
-    b = torch.zeros(2).cuda()  # dummy
-    if bias is not None:
-        b = 2 * cs * bias
-        eb = torch.exp(b)
-        ebi = 1 / eb
-        p = 0.5 * ((eb + ebi) * p - (eb - ebi) * (lam - 1))
+    if bias is None:
+        bias = torch.zeros(z.shape[1], dtype=torch.float32).cuda()
+    b = 2 * cs * bias
+    eb = torch.exp(b)
+    ebi = 1 / eb
+    p = 0.5 * ((eb + ebi) * p - (eb - ebi) * (lam - 1))
 
     d = 2 * zn * torch.log(p + torch.sqrt(p * p + 1))  # scaled distance
     ed = torch.exp(d)
@@ -229,7 +222,6 @@ def poincare_fc_fwd_ref(
             den.squeeze(),
             c,
             cs.item(),
-            bias is not None,
         )
 
     return y
