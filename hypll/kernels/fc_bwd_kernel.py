@@ -14,9 +14,9 @@ def get_autotune_configs(device=None):
     # (BLOCK_K, BLOCK_M, num_warps)
     tiles = [
         (32, 32, 1),  # tiny rows
-        # (64, 64, 2),  # mid‑size
-        # (128, 64, 4),  # long‑K
-        # (128, 128, 4),  # large K & M
+        (64, 64, 2),  # mid‑size
+        (128, 64, 4),  # long‑K
+        (128, 128, 4),  # large K & M
     ]
 
     configs = []
@@ -61,7 +61,9 @@ def _dnum_dx(
     sq_p2_1, eb, ebi, ed, edi, num = _single_block_fwd(b, lam, zn, xz, cs)
 
     _frac = cs * (eb + ebi) / zn
-    dp_dx = 0.5 * (_frac[None, :] * (xz[None, :] * dlam_dx + lam * z) - (eb - ebi) * dlam_dx)
+    dp_dx = 0.5 * (
+        _frac[None, :] * (xz[None, :] * dlam_dx[:, None] + lam * z) - (eb - ebi) * dlam_dx[:, None]
+    )
 
     dnum_dx = (ed + edi) / cs * zn / sq_p2_1 * dp_dx
 

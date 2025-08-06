@@ -15,7 +15,7 @@ ATOL = 1e-3
 NONDET_TOL = 1e16
 EPS = 1e-3
 
-B, K, M = 1, 32, 32
+B, K, M = 16, 128, 64
 
 
 def _rand(*shape, grad: bool = False):
@@ -64,15 +64,14 @@ def test_fwd(bias_flag: bool):
     assert_allclose(y, y_triton)
 
 
-@pytest.mark.parametrize("bias_flag", [True])
+@pytest.mark.parametrize("bias_flag", [True, False])
 def test_bwd(bias_flag: bool):
     torch.manual_seed(0)
 
     c = torch.tensor(0.1, dtype=torch.float32, requires_grad=False).cuda()
     x = _rand(B, K, grad=True)
     z = _rand(K, M, grad=True)
-    # r = _rand(M, grad=True) if bias_flag else None
-    r = torch.ones(M, requires_grad=True).cuda()
+    r = _rand(M, grad=True) if bias_flag else None
     inputs = (x, z, r, c)
 
     assert torch.autograd.gradcheck(
