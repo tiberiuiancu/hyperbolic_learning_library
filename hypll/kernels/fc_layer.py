@@ -18,8 +18,7 @@ class PoincareFCLayer(torch.autograd.Function):
     @staticmethod
     def backward(ctx, dout):
         x, z, xz, zn, b, lam, den = ctx.saved_tensors
-        dx = poincare_fc_bwd_triton(dout, x, z, xz, zn, b, lam, den, ctx.c, ctx.cs)
-        # TODO: implement dz and dbias
-        dz = torch.zeros_like(z)
-        dbias = torch.zeros_like(b) if ctx.has_bias else None
-        return dx, dz, dbias, None
+        dx, dz, _ = poincare_fc_bwd_triton(dout, x, z, xz, zn, b, lam, den, ctx.c, ctx.cs)
+        # TODO: implement dr
+        dr = torch.zeros_like(b) if ctx.has_bias else None
+        return dx, dz, dr, None

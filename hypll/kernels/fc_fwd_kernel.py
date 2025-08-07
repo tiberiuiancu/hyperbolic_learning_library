@@ -46,13 +46,14 @@ def _single_block_fwd(
     ebi = 1 / eb
     p = 0.5 * ((eb + ebi) * p0 - (eb - ebi) * (lam - 1))
 
-    _sq_p2_1 = tl.sqrt(p * p + 1)
-    d = 2.0 * zn * tl.log(p + _sq_p2_1)
+    sq_p2_1 = tl.sqrt(p * p + 1)
+    log_p_sq = tl.log(p + sq_p2_1)
+    d = 2.0 * zn * log_p_sq
     ed = tl.exp(d)
     edi = 1 / ed
     num = 0.5 * (ed - edi) / cs
 
-    return _sq_p2_1, eb, ebi, ed, edi, num
+    return sq_p2_1, log_p_sq, eb, ebi, ed, edi, num
 
 
 @triton.autotune(
@@ -109,7 +110,7 @@ def _poincare_fc_fwd_kernel(
         b = tl.load(B_ptr + m_ids, mask=mask_m, other=0.0)
 
         # we only need num
-        _1, _2, _3, _4, _5, num = _single_block_fwd(b, lam, zn, xz, cs)
+        _1, _2, _3, _4, _5, _6, num = _single_block_fwd(b, lam, zn, xz, cs)
 
         den_acc += tl.sum(num * num)
 
@@ -137,7 +138,6 @@ def poincare_fc_fwd_triton(x, z, r=None, c=1.0, return_cache: bool = False):
     B, K = x.shape
     K2, M = z.shape
     assert K == K2, "Dimension mismatch"
-    dtype = x.dtype
 
     # Compute required intermediates
     c_val = float(c) if not torch.is_tensor(c) else float(c.item())

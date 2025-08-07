@@ -58,14 +58,15 @@ def _dnum_dx(
     z = tl.load(Z_ptr + z_ids, mask=mask_z, other=0.0)
     b = tl.load(B_ptr + m_ids, mask=mask_m, other=0.0)
 
-    sq_p2_1, eb, ebi, ed, edi, num = _single_block_fwd(b, lam, zn, xz, cs)
+    sq_p2_1, _1, eb, ebi, ed, edi, num = _single_block_fwd(b, lam, zn, xz, cs)
 
     _frac = cs * (eb + ebi) / zn
     dp_dx = 0.5 * (
         _frac[None, :] * (xz[None, :] * dlam_dx[:, None] + lam * z) - (eb - ebi) * dlam_dx[:, None]
     )
-
-    dnum_dx = (ed + edi) / cs * zn / sq_p2_1 * dp_dx
+    dnum_dd = (ed + edi) / cs
+    dd_dp = zn / sq_p2_1
+    dnum_dx = dnum_dd * dd_dp * dp_dx
 
     return num, dnum_dx
 
@@ -75,35 +76,37 @@ def _dnum_dx(
     key=["K", "M"],
 )
 @triton.jit
-def _poincare_fc_bwd_kernel(
-    X_ptr,  # [B, K]   fp32
-    Z_ptr,  # [K, M]
-    XZ_ptr,  # [B, M]
-    ZN_ptr,  # [M]      fp32 (‖z_k‖)
-    B_ptr,  # [M]      fp32 or dummy when no bias; = 2 * cs * r
+def _poincare_fc_bwd_dx_kernel(
+    x_ptr,  # [B, K]   fp32
+    z_ptr,  # [K, M]
+    xz_ptr,  # [B, M]
+    zn_ptr,  # [M]      fp32 (‖z_k‖)
+    b_ptr,  # [M]      fp32 or dummy when no bias; = 2 * cs * r
     lam_ptr,  # [B]   fp32 – lambda cache
     den_ptr,  # [B]   fp32 – denominator cache
     dout_ptr,  # [B, M]
-    out_ptr,  # [B, K]   fp32 - pointer where to write output derivative
+    dx_ptr,  # [B, K]   fp32 - pointer where to write dx
     c,  # fp32  (curvature)
     cs,  # fp32  (sqrt(curvature))
     K: tl.constexpr,
     M: tl.constexpr,
     stride_x_b: tl.constexpr,
-    stride_out_b: tl.constexpr,
+    stride_dx_b: tl.constexpr,
     stride_xz_b: tl.constexpr,
     stride_z_k: tl.constexpr,
     stride_dout_b: tl.constexpr,
     BLOCK_K: tl.constexpr,
     BLOCK_M: tl.constexpr,
 ):
+    """Each program calculates the derivative of the loss w.r.t.
+    a block of size K within one row of x"""
     row = tl.program_id(0)
     col = tl.program_id(1)
 
     # offset pointers
-    X_ptr += row * stride_x_b
-    out_ptr += row * stride_out_b
-    XZ_ptr += row * stride_xz_b
+    x_ptr += row * stride_x_b
+    dx_ptr += row * stride_dx_b
+    xz_ptr += row * stride_xz_b
     dout_ptr += row * stride_dout_b
     lam_ptr += row
     den_ptr += row
@@ -112,7 +115,7 @@ def _poincare_fc_bwd_kernel(
     mask_k = k_ids < K
 
     # load values for the entire kernel execution
-    x = tl.load(X_ptr + k_ids, mask=mask_k, other=0.0)
+    x = tl.load(x_ptr + k_ids, mask=mask_k, other=0.0)
     lam = tl.load(lam_ptr)
     den = tl.load(den_ptr)
     dlam_dx = c * lam * lam * x
@@ -122,10 +125,10 @@ def _poincare_fc_bwd_kernel(
     m_ids = tl.arange(0, BLOCK_M)
     for _ in range(0, M, BLOCK_M):
         num, dnum_dx = _dnum_dx(
-            Z_ptr,
-            XZ_ptr,
-            ZN_ptr,
-            B_ptr,
+            z_ptr,
+            xz_ptr,
+            zn_ptr,
+            b_ptr,
             lam,
             dlam_dx,
             cs,
@@ -142,15 +145,14 @@ def _poincare_fc_bwd_kernel(
     # finish den derivative computation
     dden_dx *= c / (den - 1)
 
-    # start computing derivative of loss w.r.t. x
-    out = tl.zeros_like(x)
+    dx = tl.zeros_like(x)
     m_ids = tl.arange(0, BLOCK_M)
     for _ in range(0, M, BLOCK_M):
         num, dnum_dx = _dnum_dx(
-            Z_ptr,
-            XZ_ptr,
-            ZN_ptr,
-            B_ptr,
+            z_ptr,
+            xz_ptr,
+            zn_ptr,
+            b_ptr,
             lam,
             dlam_dx,
             cs,
@@ -164,15 +166,78 @@ def _poincare_fc_bwd_kernel(
         mask_m = m_ids < M
         dout = tl.load(dout_ptr + m_ids, mask=mask_m, other=0.0)
 
+        # calculate dx
         iden = 1 / den
         _t1 = dnum_dx * iden
         _t2 = dden_dx[:, None] * num[None, :] * iden * iden
         dy_dx = _t1 - _t2
-        out += tl.sum(dout[None, :] * dy_dx, axis=1)
+        dx += tl.sum(dout[None, :] * dy_dx, axis=1)
 
         m_ids += BLOCK_M
 
-    tl.store(out_ptr + k_ids, out, mask=mask_k)
+    tl.store(dx_ptr + k_ids, dx, mask=mask_k)
+
+
+def _poincare_fc_bwd_dz_dr_kernel(
+    z_ptr,
+    dz_ptr,
+    xz_ptr,
+    dout_ptr,
+    stride_z_k,
+    stride_dz_k,
+    stride_xz_b,
+    stride_dout_b,
+    K,
+    M,
+    BLOCK_K: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+):
+    """Each program computes a tile of size BLOCK_K, BLOCK_M of dz, and BLOCK_M of db"""
+    row = tl.program_id(0)
+    col = tl.program_id(1)
+
+    k_ids = row * BLOCK_K + tl.arange(0, BLOCK_K)
+    m_ids = col * BLOCK_M + tl.arange(0, BLOCK_M)
+    z_ids = (k_ids * stride_z_k)[:, None] + m_ids[None, :]
+
+    mask_k = k_ids < K
+    mask_m = m_ids < M
+    mask_z = mask_k[:, None] & mask_m[None, :]
+
+    # load for the entire kernel execution
+    z = tl.load(z_ptr + z_ids, mask=mask_z, other=0.0)
+
+    dz_acc = tl.zeros((BLOCK_K, BLOCK_M), dtype=tl.float32)
+    for _ in range(B):
+
+        # load values
+        zn = tl.load(zn_ptr + m_ids, mask=mask_m, other=1.0)
+        xz = tl.load(xz_ptr + m_ids, mask=mask_m, other=0.0)
+        b = tl.load(b_ptr + m_ids, mask=mask_m, other=0.0)
+        dout = tl.load(dout_ptr + m_ids, mask=mask_m, other=0.0)
+
+        # calculate values from forward pass
+        sq_p2_1, log_p_sq, eb, ebi, ed, edi, num = _single_block_fwd(b, lam, zn, xz, cs)
+
+        # calculate dy dz derivative
+        _frac = cs * (eb + ebi) / zn
+        dnum_dd = (ed + edi) / cs
+        dd_dp = zn / sq_p2_1
+        dzn_dz = z / zn[None, :]
+        dp_dz = 0.5 * (_frac * lam * (x[:, None] * zn[None, :] - dzn_dz * xz[None, :]))
+        dnum_dz = dnum_dd * log_p_sq * dzn_dz + dd_dp * dp_dz
+        dy_dz = dnum_dz * iden * (1 - c * num[None, :] * num[None, :] * iden * iden_1)
+        dz_acc += dy_dz * dout
+
+        # TODO: db
+
+        # move pointer to next line for next batch item
+        xz_ptr += stride_xz_b
+        dout_ptr += stride_dout_b
+
+    mask = (k_ids[:, None] < K) & (m_ids[None, :] < M)
+    offs = (k_ids[:, None] * stride_dz_k) + (m_ids[None, :])
+    tl.store(dz_ptr + offs, dz_acc, mask=mask)
 
 
 def poincare_fc_bwd_triton(dout, x, z, xz, zn, b, lam, den, c, cs):
@@ -183,9 +248,12 @@ def poincare_fc_bwd_triton(dout, x, z, xz, zn, b, lam, den, c, cs):
     c = c if isinstance(c, float) else c.item()
     cs = cs if isinstance(cs, float) else cs.item()
 
-    out = torch.empty_like(x)
+    dx = torch.empty_like(x)
+    dz = torch.empty_like(z)
+    dr = torch.empty_like(b)
+
     grid = lambda meta: (B, triton.cdiv(K, meta["BLOCK_K"]))
-    _poincare_fc_bwd_kernel[grid](
+    _poincare_fc_bwd_dx_kernel[grid](
         x,
         z,
         xz,
@@ -194,16 +262,21 @@ def poincare_fc_bwd_triton(dout, x, z, xz, zn, b, lam, den, c, cs):
         lam,
         den,
         dout,
-        out,
+        dx,
         c,
         cs,
         K,
         M,
         x.stride(0),
-        out.stride(0),
+        dx.stride(0),
         xz.stride(0),
         z.stride(0),
         dout.stride(0),
     )
 
-    return out
+    grid = lambda meta: (triton.cdiv(K, meta["BLOCK_K"], triton.cdiv(M, meta["BLOCK_m"])))
+    _poincare_fc_bwd_dz_dr_kernel[grid](
+        z, dz, xz, dout, z.stride(0), dz.stride(0), xz.stride(0), dout.stride(0), K, M
+    )
+
+    return dx, dz, dr
