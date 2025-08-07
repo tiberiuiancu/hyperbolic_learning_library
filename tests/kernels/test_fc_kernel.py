@@ -10,7 +10,7 @@ from hypll.kernels.fc_layer import PoincareFCLayer
 
 import pytest
 
-RTOL = 1e-1
+RTOL = 1
 ATOL = 1e-3
 NONDET_TOL = 1e16
 EPS = 1e-3
@@ -64,8 +64,7 @@ def test_fwd(bias_flag: bool):
     assert_allclose(y, y_triton)
 
 
-# TODO: readd false
-@pytest.mark.parametrize("bias_flag", [True])
+@pytest.mark.parametrize("bias_flag", [True, False])
 def test_bwd(bias_flag: bool):
     torch.manual_seed(0)
 

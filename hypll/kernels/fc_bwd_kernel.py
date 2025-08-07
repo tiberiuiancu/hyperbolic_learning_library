@@ -182,6 +182,7 @@ def _poincare_fc_bwd_dz_dr_kernel(
     z_ptr,
     b_ptr,
     dz_ptr,
+    dr_ptr,
     xz_ptr,
     zn_ptr,
     lam_ptr,
@@ -216,8 +217,8 @@ def _poincare_fc_bwd_dz_dr_kernel(
     z = tl.load(z_ptr + z_ids, mask=mask_z, other=0.0)
 
     dz_acc = tl.zeros((BLOCK_K, BLOCK_M), dtype=tl.float32)
+    dr_acc = tl.zeros((BLOCK_M,), dtype=tl.float32)
     for i in range(B):
-
         # load values
         x = tl.load(x_ptr + k_ids, mask=mask_k, other=0.0)
         zn = tl.load(zn_ptr + m_ids, mask=mask_m, other=1.0)
@@ -230,7 +231,7 @@ def _poincare_fc_bwd_dz_dr_kernel(
         # calculate values from forward pass
         sq_p2_1, log_p_sq, eb, ebi, ed, edi, num = _single_block_fwd(b, lam, zn, xz, cs)
 
-        # calculate dy dz derivative
+        # dy/dz
         iden = 1 / den
         iden_1 = 1 / (den - 1)
         izn = 1 / zn
@@ -245,19 +246,29 @@ def _poincare_fc_bwd_dz_dr_kernel(
             * (x[:, None] - dzn_dz * (xz * izn)[None, :])
         )
         dnum_dz = dnum_dd * (log_p_sq * dzn_dz + dd_dp * dp_dz)
-        dy_dz = dnum_dz * iden * (1 - c * (num * num)[None, :] * iden * iden_1)
+        _dy_cache = iden * (1 - c * num * num * iden * iden_1)
+        dy_dz = dnum_dz * _dy_cache[None, :]
         dz_acc += dy_dz * dout[None, :]
 
-        # TODO: db
+        # dy/dr
+        _dp_cache_1 = cs * lam * xz / zn
+        _dp_cache_2 = lam - 1
+        dp_dr = cs * (eb * (_dp_cache_1 - _dp_cache_2) - ebi * (_dp_cache_1 + _dp_cache_2))
+        dnum_dr = dnum_dd * dd_dp * dp_dr
+        dy_dr = dnum_dr * _dy_cache
+        dr_acc += dy_dr * dout
 
         # move pointer to next line for next batch item
         x_ptr += stride_x_b
         xz_ptr += stride_xz_b
         dout_ptr += stride_dout_b
 
-    mask = (k_ids[:, None] < K) & (m_ids[None, :] < M)
-    offs = (k_ids[:, None] * stride_dz_k) + (m_ids[None, :])
-    tl.store(dz_ptr + offs, dz_acc, mask=mask)
+    mask_dz = (k_ids[:, None] < K) & (m_ids[None, :] < M)
+    offs_dz = (k_ids[:, None] * stride_dz_k) + (m_ids[None, :])
+    mask_dr = m_ids < M
+    offs_dr = m_ids
+    tl.store(dz_ptr + offs_dz, dz_acc, mask=mask_dz)
+    tl.store(dr_ptr + offs_dr, dr_acc, mask=mask_dr)
 
 
 def poincare_fc_bwd_triton(dout, x, z, xz, zn, b, lam, den, c, cs):
@@ -300,6 +311,7 @@ def poincare_fc_bwd_triton(dout, x, z, xz, zn, b, lam, den, c, cs):
         z,
         b,
         dz,
+        dr,
         xz,
         zn,
         lam,
