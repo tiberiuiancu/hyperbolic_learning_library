@@ -71,10 +71,7 @@ def _dnum_dx(
     return num, dnum_dx
 
 
-@triton.autotune(
-    configs=get_autotune_configs(),
-    key=["K", "M"],
-)
+@triton.autotune(configs=get_autotune_configs(), key=["K", "M"])
 @triton.jit
 def _poincare_fc_bwd_dx_kernel(
     x_ptr,  # [B, K]   fp32
@@ -118,6 +115,7 @@ def _poincare_fc_bwd_dx_kernel(
     x = tl.load(x_ptr + k_ids, mask=mask_k, other=0.0)
     lam = tl.load(lam_ptr)
     den = tl.load(den_ptr)
+    iden = 1 / den
     dlam_dx = c * lam * lam * x
 
     # pre-compute derivative of den_b w.r.t. x[b, k:k+BLOCK_K]
@@ -167,7 +165,6 @@ def _poincare_fc_bwd_dx_kernel(
         dout = tl.load(dout_ptr + m_ids, mask=mask_m, other=0.0)
 
         # calculate dx
-        iden = 1 / den
         _t1 = dnum_dx * iden
         _t2 = dden_dx[:, None] * num[None, :] * iden * iden
         dy_dx = _t1 - _t2
@@ -178,17 +175,28 @@ def _poincare_fc_bwd_dx_kernel(
     tl.store(dx_ptr + k_ids, dx, mask=mask_k)
 
 
+@triton.autotune(configs=get_autotune_configs(), key=["K", "M"])
+@triton.jit
 def _poincare_fc_bwd_dz_dr_kernel(
+    x_ptr,
     z_ptr,
+    b_ptr,
     dz_ptr,
     xz_ptr,
+    zn_ptr,
+    lam_ptr,
+    den_ptr,
     dout_ptr,
-    stride_z_k,
-    stride_dz_k,
-    stride_xz_b,
-    stride_dout_b,
-    K,
-    M,
+    c,
+    cs,
+    stride_x_b: tl.constexpr,
+    stride_z_k: tl.constexpr,
+    stride_dz_k: tl.constexpr,
+    stride_xz_b: tl.constexpr,
+    stride_dout_b: tl.constexpr,
+    B: tl.constexpr,
+    K: tl.constexpr,
+    M: tl.constexpr,
     BLOCK_K: tl.constexpr,
     BLOCK_M: tl.constexpr,
 ):
@@ -208,18 +216,23 @@ def _poincare_fc_bwd_dz_dr_kernel(
     z = tl.load(z_ptr + z_ids, mask=mask_z, other=0.0)
 
     dz_acc = tl.zeros((BLOCK_K, BLOCK_M), dtype=tl.float32)
-    for _ in range(B):
+    for i in range(B):
 
         # load values
+        x = tl.load(x_ptr + k_ids, mask=mask_k, other=0.0)
         zn = tl.load(zn_ptr + m_ids, mask=mask_m, other=1.0)
         xz = tl.load(xz_ptr + m_ids, mask=mask_m, other=0.0)
         b = tl.load(b_ptr + m_ids, mask=mask_m, other=0.0)
+        lam = tl.load(lam_ptr + i)
+        den = tl.load(den_ptr + i)
         dout = tl.load(dout_ptr + m_ids, mask=mask_m, other=0.0)
 
         # calculate values from forward pass
         sq_p2_1, log_p_sq, eb, ebi, ed, edi, num = _single_block_fwd(b, lam, zn, xz, cs)
 
         # calculate dy dz derivative
+        iden = 1 / den
+        iden_1 = 1 / (den - 1)
         _frac = cs * (eb + ebi) / zn
         dnum_dd = (ed + edi) / cs
         dd_dp = zn / sq_p2_1
@@ -232,6 +245,7 @@ def _poincare_fc_bwd_dz_dr_kernel(
         # TODO: db
 
         # move pointer to next line for next batch item
+        x_ptr += stride_x_b
         xz_ptr += stride_xz_b
         dout_ptr += stride_dout_b
 
@@ -274,9 +288,27 @@ def poincare_fc_bwd_triton(dout, x, z, xz, zn, b, lam, den, c, cs):
         dout.stride(0),
     )
 
-    grid = lambda meta: (triton.cdiv(K, meta["BLOCK_K"], triton.cdiv(M, meta["BLOCK_m"])))
+    grid = lambda meta: (triton.cdiv(K, meta["BLOCK_K"]), triton.cdiv(M, meta["BLOCK_M"]))
     _poincare_fc_bwd_dz_dr_kernel[grid](
-        z, dz, xz, dout, z.stride(0), dz.stride(0), xz.stride(0), dout.stride(0), K, M
+        x,
+        z,
+        b,
+        dz,
+        xz,
+        zn,
+        lam,
+        den,
+        dout,
+        c,
+        cs,
+        x.stride(0),
+        z.stride(0),
+        dz.stride(0),
+        xz.stride(0),
+        dout.stride(0),
+        B,
+        K,
+        M,
     )
 
     return dx, dz, dr
