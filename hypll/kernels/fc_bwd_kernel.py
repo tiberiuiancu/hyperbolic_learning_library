@@ -233,14 +233,20 @@ def _poincare_fc_bwd_dz_dr_kernel(
         # calculate dy dz derivative
         iden = 1 / den
         iden_1 = 1 / (den - 1)
-        _frac = cs * (eb + ebi) / zn
+        izn = 1 / zn
         dnum_dd = (ed + edi) / cs
         dd_dp = zn / sq_p2_1
-        dzn_dz = z / zn[None, :]
-        dp_dz = 0.5 * (_frac * lam * (x[:, None] * zn[None, :] - dzn_dz * xz[None, :]))
-        dnum_dz = dnum_dd * log_p_sq * dzn_dz + dd_dp * dp_dz
-        dy_dz = dnum_dz * iden * (1 - c * num[None, :] * num[None, :] * iden * iden_1)
-        dz_acc += dy_dz * dout
+        dzn_dz = z * izn[None, :]
+        dp_dz = (
+            0.5
+            * cs
+            * lam
+            * ((eb + ebi) * izn)[None, :]
+            * (x[:, None] - dzn_dz * (xz * izn)[None, :])
+        )
+        dnum_dz = dnum_dd * (log_p_sq * dzn_dz + dd_dp * dp_dz)
+        dy_dz = dnum_dz * iden * (1 - c * (num * num)[None, :] * iden * iden_1)
+        dz_acc += dy_dz * dout[None, :]
 
         # TODO: db
 
