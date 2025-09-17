@@ -1,9 +1,32 @@
 import os
 
 import torch
+from hypll.manifolds.poincare_ball.curvature import Curvature
+from hypll.manifolds.poincare_ball.manifold import PoincareBall
 import triton
 
-from hypll.kernels.fc_kernel import poincare_fc_fwd_ref, poincare_fully_connected_triton
+from hypll.kernels.fc_layer import FastPoincareFC
+import hypll.nn as hnn
+
+
+def build_layers(M, K, c, dtype, device):
+    manifold = PoincareBall(c=Curvature(0.1, requires_grad=True))
+
+    # fast triton implentation
+    triton_layer = FastPoincareFC(M, K, c=c, dtype=dtype, device=device)
+
+    _get_torch_layer = lambda: hnn.HLinear(M, K, manifold=manifold).to(device=device, dtype=dtype)
+
+    # torch implementation in hnn
+    torch_layer = _get_torch_layer()
+
+    # compiled hnn
+    compiled_layer = torch.compile(_get_torch_layer())
+
+    # euclidean nn.Linear
+    eu_layer = torch.nn.Linear(M, K, bias=True, device=device, dtype=dtype)
+
+    return triton_layer, torch_layer, compiled_layer, eu_layer
 
 
 @triton.testing.perf_report(
@@ -19,34 +42,50 @@ from hypll.kernels.fc_kernel import poincare_fc_fwd_ref, poincare_fully_connecte
         args={"c": 0.1},
     )
 )
-def bench(B, M, K, c, provider):
-    B, M, K = int(B), int(M), int(K)
-    torch.manual_seed(42)
+def bench(B, M, K, provider: str, c: float):
     device = "cuda"
-    x = torch.randn(B, K, device=device, dtype=torch.float32)
-    z = torch.randn(K, M, device=device, dtype=torch.float32)
-    r = torch.randn(M, device=device, dtype=torch.float32)
+    dtype = torch.float32
+    torch.manual_seed(0)
+
+    global manifold, hnn
+
+    x = torch.randn(B, M, device=device, dtype=dtype, requires_grad=True)
+
+    triton_layer, torch_layer, compiled_layer, eu_layer = build_layers(
+        M, K, c, dtype, device, manifold
+    )
 
     if provider == "triton":
-        fn = lambda: poincare_fully_connected_triton(x, z, r, c)
+        layer = triton_layer
     elif provider == "torch":
-        fn = lambda: poincare_fc_fwd_ref(x, z, r, c)
+        layer = torch_layer
     elif provider == "compile":
-        compiled = torch.compile(poincare_fc_fwd_ref)
-        fn = lambda: compiled(x, z, r, c)
-    elif provider == "matmul":
-        fn = lambda: x @ z
+        layer = compiled_layer
+    elif provider == "euclidean":
+        layer = eu_layer
     else:
-        raise ValueError(provider)
+        raise ValueError(f"Unknown provider: {provider}")
 
-    ms = triton.testing.do_bench(fn)
-    # ms is milliseconds, so convert to seconds for TFLOPS calculation
-    seconds = ms / 1e3
-    tflops = (2 * B * M * K) / (seconds * 1e12)
+    layer.train()
+
+    # FLOPs: forward matmul ~2*B*M*K, backward wrt input another ~2*B*M*K,
+    # backward wrt weight another ~2*B*M*K. So ~6*B*M*K total.
+    # TODO: calculate FLOPS properly
+    flop = 6.0 * B * M * K
+
+    # Timed run: forward + backward
+    def run():
+        y = layer(x)
+        loss = y.sum()
+        loss.backward()
+        x.grad = None  # reset for next iteration
+
+    ms = triton.do_bench(run)
+    tflops = flop / ms / 1e9
     return tflops
 
 
 if __name__ == "__main__":
     # Run benchmarks and save plots
     os.makedirs("plots", exist_ok=True)
-    bench.run(show_plots=False, print_data=True, save_path="./plots/poincare_fc_performance_B")
+    bench.run(show_plots=False, print_data=True, save_path="./plots/poincare_fc_performance")

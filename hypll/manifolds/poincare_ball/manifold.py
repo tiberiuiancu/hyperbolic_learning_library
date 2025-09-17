@@ -8,6 +8,7 @@ from torch.nn.common_types import _size_2_t
 from torch.nn.functional import softplus, unfold
 from torch.nn.init import normal_, zeros_
 
+from hypll.kernels.fc_layer import FastPoincareFC
 from hypll.manifolds.base import Manifold
 from hypll.manifolds.euclidean import Euclidean
 from hypll.manifolds.poincare_ball.curvature import Curvature
@@ -49,7 +50,7 @@ class PoincareBall(Manifold):
 
     """
 
-    def __init__(self, c: Curvature):
+    def __init__(self, c: Curvature, use_triton_backend: bool = True):
         """Initializes an instance of PoincareBall manifold.
 
         Examples:
@@ -60,6 +61,7 @@ class PoincareBall(Manifold):
         """
         super(PoincareBall, self).__init__()
         self.c = c
+        self.use_triton_backend = use_triton_backend
 
     def mobius_add(self, x: ManifoldTensor, y: ManifoldTensor) -> ManifoldTensor:
         dim = check_dims_with_broadcasting(x, y)
@@ -146,9 +148,14 @@ class PoincareBall(Manifold):
                 f"Expected the manifold dimension of the hyperplane orientations to be 0, but got "
                 f"{z.man_dim} instead"
             )
-        new_tensor = poincare_fully_connected(
-            x=x.tensor, z=z.tensor, bias=bias, c=self.c(), dim=x.man_dim
-        )
+        if self.use_triton_backend:
+            new_tensor = FastPoincareFC.apply(
+                x=x.tensor, z=z.tensor, bias=bias, c=self.c(), dim=x.man_dim
+            )
+        else:
+            new_tensor = poincare_fully_connected(
+                x=x.tensor, z=z.tensor, bias=bias, c=self.c(), dim=x.man_dim
+            )
         new_tensor = ManifoldTensor(data=new_tensor, manifold=self, man_dim=x.man_dim)
         return self.project(new_tensor)
 

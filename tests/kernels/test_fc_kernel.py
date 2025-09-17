@@ -6,7 +6,7 @@ from hypll.kernels.fc_fwd_kernel import (
     poincare_fc_fwd_triton,
 )
 from hypll.manifolds.poincare_ball.math.linalg import poincare_fully_connected
-from hypll.kernels.fc_layer import PoincareFCLayer
+from hypll.kernels.fc_layer import FastPoincareFC
 
 import pytest
 
@@ -75,7 +75,7 @@ def test_bwd(bias_flag: bool):
     inputs = (x, z, r, c)
 
     assert torch.autograd.gradcheck(
-        PoincareFCLayer.apply,
+        FastPoincareFC.apply,
         inputs,
         eps=EPS,
         atol=ATOL,
