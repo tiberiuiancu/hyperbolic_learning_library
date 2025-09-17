@@ -14,10 +14,20 @@ def get_autotune_configs(device=None):
 
     # (BLOCK_K, BLOCK_M, num_warps)
     tiles = [
-        (32, 32, 1),  # tiny rows
-        (64, 64, 2),  # mid‑size
-        (128, 64, 4),  # long‑K
-        (128, 128, 4),  # large K & M
+        # Small tiles (good for small problems / latency bound)
+        (16, 16, 1),
+        (32, 16, 2),
+        (16, 64, 2),
+        # Balanced medium tiles
+        (32, 32, 2),
+        (64, 32, 2),
+        (64, 64, 2),
+        (64, 64, 4),
+        # Rectangular, long-K or long-M
+        (128, 32, 4),  # tall
+        (32, 128, 4),  # wide
+        (128, 64, 4),
+        (64, 128, 4),
     ]
 
     configs = []
@@ -146,9 +156,9 @@ def poincare_fc_fwd_triton(x, z, r=None, c=1.0, return_cache: bool = False):
     xz = x @ z  # [B, M]
 
     # Allocate output tensors and caches
-    num = torch.empty((B, M), dtype=torch.float32).cuda()
-    den = torch.empty((B,), dtype=torch.float32).cuda()
-    lam = torch.empty((B,), dtype=torch.float32).cuda()
+    num = torch.empty((B, M), dtype=torch.float32, device="cuda")
+    den = torch.empty((B,), dtype=torch.float32, device="cuda")
+    lam = torch.empty((B,), dtype=torch.float32, device="cuda")
 
     # Prepare bias
     if r is None:
