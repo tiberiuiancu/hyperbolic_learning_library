@@ -72,7 +72,8 @@ def test_bwd(bias_flag: bool):
     x = _rand(B, K, grad=True)
     z = _rand(K, M, grad=True)
     r = _rand(M, grad=True) if bias_flag else None
-    inputs = (x, z, r, c)
+    dim = -1
+    inputs = (x, z, r, c, dim)
 
     assert torch.autograd.gradcheck(
         FastPoincareFC.apply,

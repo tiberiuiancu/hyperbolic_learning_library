@@ -15,6 +15,7 @@ class FastPoincareFC(torch.autograd.Function):
         ctx.save_for_backward(x, z, xz, zn, b, lam, den)
         ctx.c = c
         ctx.cs = cs
+        ctx.dim = dim
         ctx.has_bias = r is not None
         return out.movedim(source=-1, destination=dim)
 
@@ -22,4 +23,8 @@ class FastPoincareFC(torch.autograd.Function):
     def backward(ctx, dout):
         x, z, xz, zn, b, lam, den = ctx.saved_tensors
         dx, dz, dr = poincare_fc_bwd_triton(dout, x, z, xz, zn, b, lam, den, ctx.c, ctx.cs)
-        return dx, dz, dr, None
+
+        dx = dx.movedim(source=-1, destination=ctx.dim)
+        dr = dr if ctx.has_bias else None
+
+        return dx, dz, dr, None, None

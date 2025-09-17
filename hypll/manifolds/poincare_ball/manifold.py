@@ -149,9 +149,7 @@ class PoincareBall(Manifold):
                 f"{z.man_dim} instead"
             )
         if self.use_triton_backend:
-            new_tensor = FastPoincareFC.apply(
-                x=x.tensor, z=z.tensor, bias=bias, c=self.c(), dim=x.man_dim
-            )
+            new_tensor = FastPoincareFC.apply(x.tensor, z.tensor, bias, self.c(), x.man_dim)
         else:
             new_tensor = poincare_fully_connected(
                 x=x.tensor, z=z.tensor, bias=bias, c=self.c(), dim=x.man_dim
