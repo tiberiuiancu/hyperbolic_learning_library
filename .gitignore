@@ -13,3 +13,5 @@ docs/source/_autosummary
 docs/source/tutorials
 tests/data
 /traces/
+torch_compile_debug/
+plots/
