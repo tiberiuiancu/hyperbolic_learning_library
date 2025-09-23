@@ -1,10 +1,10 @@
-import math
 import torch, pytest
 
 from hypll.kernels.fc_fwd_kernel import (
-    poincare_fc_fwd_ref,
-    poincare_fc_fwd_triton,
+    poincare_fc_fwd_project_ref,
+    poincare_fc_project_fwd_triton,
 )
+from hypll.manifolds.poincare_ball.math.diffgeom import project
 from hypll.manifolds.poincare_ball.math.linalg import poincare_fully_connected
 from hypll.kernels.fc_layer import FastPoincareFC
 
@@ -37,14 +37,17 @@ def assert_allclose(x, y, message: str = ""):
 @pytest.mark.parametrize("bias_flag", [True, False])
 def test_fwd_ref(bias_flag):
     c = torch.tensor(0.1, dtype=torch.float32).cuda()
+
     x = _rand(B, K)
     z = _rand(K, M)
     r = _rand(M) if bias_flag else None
 
     y = poincare_fully_connected(x, z, r, c)
-    y_ref = poincare_fc_fwd_ref(x, z, r, c)
+    y = project(y, c)
 
-    assert assert_allclose(y, y_ref)
+    y_ref = poincare_fc_fwd_project_ref(x, z, r, c)
+
+    assert_allclose(y, y_ref)
 
 
 @pytest.mark.parametrize("bias_flag", [True, False])
@@ -54,8 +57,8 @@ def test_fwd(bias_flag: bool):
     z = _rand(K, M)
     r = _rand(M) if bias_flag else None
 
-    y, cache = poincare_fc_fwd_ref(x, z, r, c, return_cache=True)
-    y_triton, cache_triton = poincare_fc_fwd_triton(x, z, r, c, return_cache=True)
+    y, cache = poincare_fc_fwd_project_ref(x, z, r, c, return_cache=True)
+    y_triton, cache_triton = poincare_fc_project_fwd_triton(x, z, r, c, return_cache=True)
     cache_names = ["x", "z", "xz", "zn", "b", "lam", "den", "c", "cs", "has_bias"]
 
     for n, c, ct in zip(cache_names, cache, cache_triton):

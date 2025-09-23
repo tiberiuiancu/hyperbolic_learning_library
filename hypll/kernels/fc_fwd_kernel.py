@@ -78,6 +78,7 @@ def _poincare_fc_fwd_kernel(
     B_ptr,  # [M]      fp32 or dummy when no bias; = 2 * cs * r
     num_ptr,  # [B, M]   fp32 – output numerator
     den_ptr,  # [B]   fp32 – output denominator
+    y_norm_ptr,  # [B] fp32 - output y norm
     lam_ptr,  # [B]   fp32 – cache for lambda
     c,  # fp32  (curvature)
     cs,  # fp32  (sqrt(curvature))
@@ -129,11 +130,57 @@ def _poincare_fc_fwd_kernel(
     # calculate denominator value
     den = 1.0 + tl.sqrt(1.0 + c * den_acc)
 
+    # calculate the euclidean norm of the output
+    y_norm = tl.sqrt(den_acc / den)
+    y_norm = tl.clamp(y_norm, 1e-15, 1e15)
+
     # write denominator
     tl.store(den_ptr + row, den)
+    tl.store(y_norm_ptr + row, y_norm)
 
 
-def poincare_fc_fwd_triton(x, z, r=None, c=1.0, return_cache: bool = False):
+@triton.autotune(
+    configs=[
+        triton.Config({"BLOCK_M": 16}),
+        triton.Config({"BLOCK_M": 32}),
+        triton.Config({"BLOCK_M": 64}),
+        triton.Config({"BLOCK_M": 128}),
+    ],
+    key=["B", "M"],
+)
+@triton.jit
+def _project_where_kernel(
+    num_ptr,
+    den_ptr,
+    norm_ptr,
+    out_ptr,
+    max_norm,
+    B: tl.constexpr,
+    M: tl.constexpr,
+    stride_num_b: tl.constexpr,
+    stride_out_b: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+):
+    b = tl.program_id(0)
+    col_block = tl.program_id(1)
+    offs_m = col_block * BLOCK_M + tl.arange(0, BLOCK_M)
+    mask = offs_m < M
+
+    # load memory
+    num = tl.load(num_ptr + b * stride_num_b + offs_m, mask=mask, other=0.0)
+    den = tl.load(den_ptr + b)
+    norm = tl.load(norm_ptr + b)
+    y = num / den
+    
+    if norm > max_norm:
+        y *= max_norm / norm
+
+    tl.store(out_ptr + b * stride_out_b + offs_m, y, mask=mask)
+
+
+def poincare_fc_project_fwd_triton(
+    x, z, r=None, c=1.0, eps: float = -1, return_cache: bool = False
+):
     """
     Host function to call the Triton Poincare fully connected kernel.
     Args:
@@ -158,6 +205,7 @@ def poincare_fc_fwd_triton(x, z, r=None, c=1.0, return_cache: bool = False):
     # Allocate output tensors and caches
     num = torch.empty((B, M), dtype=torch.float32, device="cuda")
     den = torch.empty((B,), dtype=torch.float32, device="cuda")
+    y_norm = torch.empty((B,), dtype=torch.float32, device="cuda")
     lam = torch.empty((B,), dtype=torch.float32, device="cuda")
 
     # Prepare bias
@@ -174,6 +222,7 @@ def poincare_fc_fwd_triton(x, z, r=None, c=1.0, return_cache: bool = False):
         b,
         num,
         den,
+        y_norm,
         lam,
         c_val,
         cs,
@@ -184,22 +233,47 @@ def poincare_fc_fwd_triton(x, z, r=None, c=1.0, return_cache: bool = False):
         num.stride(0),
     )
 
-    out = num / den[:, None]
+    if eps < 0:
+        eps = 1e-15
+
+    max_norm = 1e15
+    if c > 0:
+        max_norm = (1 - eps) / ((c_val + 1e-15) ** 0.5)
+
+    # allocate space for result
+    y_proj = torch.empty_like(num)
+
+    grid = lambda meta: (B, triton.cdiv(M, meta["BLOCK_M"]))
+    _project_where_kernel[grid](
+        num,
+        den,
+        y_norm,
+        y_proj,
+        max_norm,
+        num.shape[0],
+        num.shape[1],
+        num.stride(0),
+        y_proj.stride(0),
+    )
 
     if return_cache:
-        return out, (x, z, xz, zn, b, lam, den, c, cs)
-    return out
+        return y_proj, (x, z, xz, zn, b, lam, den, c, cs)
+    return y_proj
 
 
-def poincare_fc_fwd_ref(
+def poincare_fc_fwd_project_ref(
     x: torch.Tensor,
     z: torch.Tensor,
     bias: Optional[torch.Tensor],
     c: torch.Tensor,
     dim: int = -1,
+    eps: float = -1.0,
     return_cache: bool = False,
 ) -> torch.Tensor:
     x = x.movedim(dim, -1)  # features last
+    if bias is None:
+        bias = torch.zeros(z.shape[1], dtype=torch.float32, device="cuda")
+
     cs = c.sqrt()
     lam = 2 / (1 - c * x.pow(2).sum(-1, keepdim=True))
     zn = z.norm(dim=0).clamp_min(1e-15)
@@ -207,22 +281,35 @@ def poincare_fc_fwd_ref(
     xz = torch.matmul(x, z)
     p = (cs * lam / zn) * xz
 
-    if bias is None:
-        bias = torch.zeros(z.shape[1], dtype=torch.float32).cuda()
     b = 2 * cs * bias
     eb = torch.exp(b)
     ebi = 1 / eb
     p = 0.5 * ((eb + ebi) * p - (eb - ebi) * (lam - 1))
 
-    d = 2 * zn * torch.log(p + torch.sqrt(p * p + 1))  # scaled distance
+    d = 2 * zn * torch.log(p + torch.sqrt(p * p + 1))
     ed = torch.exp(d)
     num = (ed - 1 / ed) / (2 * cs)  # sinh(d)/cs
     den = 1 + torch.sqrt(1 + c * num.pow(2).sum(-1, keepdim=True))
 
     y = (num / den).movedim(-1, dim)
 
+    # final projection
+    if eps < 0:
+        if y.dtype == torch.float32:
+            eps = 4e-3
+        else:
+            eps = 1e-5
+
+    maxnorm = (1 - eps) / ((c + 1e-15) ** 0.5)
+    maxnorm = torch.where(c.gt(0), maxnorm, c.new_full((), 1e15))
+
+    norm = y.norm(dim=dim, keepdim=True, p=2).clamp_min(1e-15)
+    cond = norm > maxnorm
+    projected = y / norm * maxnorm
+    projected_y = torch.where(cond, projected, y)
+
     if return_cache:
-        return y, (
+        return projected_y, (
             x,
             z,
             xz,
@@ -234,4 +321,4 @@ def poincare_fc_fwd_ref(
             cs.item(),
         )
 
-    return y
+    return projected_y

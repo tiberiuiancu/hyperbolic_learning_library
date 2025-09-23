@@ -1,5 +1,5 @@
 import torch
-from hypll.kernels.fc_fwd_kernel import poincare_fc_fwd_triton
+from hypll.kernels.fc_fwd_kernel import poincare_fc_project_fwd_triton
 from hypll.kernels.fc_bwd_kernel import poincare_fc_bwd_triton
 
 
@@ -9,7 +9,7 @@ class FastPoincareFC(torch.autograd.Function):
         ctx, x: torch.Tensor, z: torch.Tensor, r: torch.Tensor = None, c: float = 1.0, dim: int = -1
     ):
         x = x.movedim(source=dim, destination=-1)
-        out, (x, z, xz, zn, b, lam, den, c, cs) = poincare_fc_fwd_triton(
+        out, (x, z, xz, zn, b, lam, den, c, cs) = poincare_fc_project_fwd_triton(
             x, z, r, c, return_cache=True
         )
         ctx.save_for_backward(x, z, xz, zn, b, lam, den)
