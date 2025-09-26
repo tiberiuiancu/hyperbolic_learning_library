@@ -152,9 +152,9 @@ def _poincare_fc_fwd_kernel(
 def _project_where_kernel(
     num_ptr,
     den_ptr,
-    norm_ptr,
+    yn_ptr,
+    max_norm_ptr,
     out_ptr,
-    max_norm,
     B: tl.constexpr,
     M: tl.constexpr,
     stride_num_b: tl.constexpr,
@@ -169,11 +169,12 @@ def _project_where_kernel(
     # load memory
     num = tl.load(num_ptr + b * stride_num_b + offs_m, mask=mask, other=0.0)
     den = tl.load(den_ptr + b)
-    norm = tl.load(norm_ptr + b)
+    yn = tl.load(yn_ptr + b)
+    max_norm = tl.load(max_norm_ptr + b)
     y = num / den
-    
-    if norm > max_norm:
-        y *= max_norm / norm
+
+    if yn > max_norm:
+        y *= max_norm / yn
 
     tl.store(out_ptr + b * stride_out_b + offs_m, y, mask=mask)
 
@@ -205,7 +206,7 @@ def poincare_fc_project_fwd_triton(
     # Allocate output tensors and caches
     num = torch.empty((B, M), dtype=torch.float32, device="cuda")
     den = torch.empty((B,), dtype=torch.float32, device="cuda")
-    y_norm = torch.empty((B,), dtype=torch.float32, device="cuda")
+    yn = torch.empty((B,), dtype=torch.float32, device="cuda")
     lam = torch.empty((B,), dtype=torch.float32, device="cuda")
 
     # Prepare bias
@@ -222,7 +223,7 @@ def poincare_fc_project_fwd_triton(
         b,
         num,
         den,
-        y_norm,
+        yn,
         lam,
         c_val,
         cs,
@@ -238,7 +239,10 @@ def poincare_fc_project_fwd_triton(
 
     max_norm = 1e15
     if c > 0:
-        max_norm = (1 - eps) / ((c_val + 1e-15) ** 0.5)
+        max_norm = (1 - eps) / ((c_val + eps) ** 0.5)
+
+    # calculate mn as a constant so it's easier to backprop
+    mn = torch.where(yn > max_norm, max_norm, yn)
 
     # allocate space for result
     y_proj = torch.empty_like(num)
@@ -247,9 +251,9 @@ def poincare_fc_project_fwd_triton(
     _project_where_kernel[grid](
         num,
         den,
-        y_norm,
+        yn,
+        mn,
         y_proj,
-        max_norm,
         num.shape[0],
         num.shape[1],
         num.stride(0),
@@ -304,9 +308,8 @@ def poincare_fc_fwd_project_ref(
     maxnorm = torch.where(c.gt(0), maxnorm, c.new_full((), 1e15))
 
     norm = y.norm(dim=dim, keepdim=True, p=2).clamp_min(1e-15)
-    cond = norm > maxnorm
-    projected = y / norm * maxnorm
-    projected_y = torch.where(cond, projected, y)
+    mn = torch.where(norm > maxnorm, maxnorm, norm)
+    projected_y = y / norm * mn
 
     if return_cache:
         return projected_y, (
