@@ -1,109 +1,199 @@
 \documentclass{article}
-\usepackage{graphicx}
-\usepackage{amsmath}
-\usepackage{amssymb}
-\usepackage{cancel}
-\usepackage{xparse}
+\usepackage{amsmath,amssymb,mathtools}
 \usepackage[a4paper,margin=1in]{geometry}
+\usepackage{xparse}
 
 \title{PAI}
+\author{Tiberiu Iancu}
+\date{August 2025}
 
 \begin{document}
-
 \maketitle
 
-\section{Derivatives}
-
-\subsection{Forward pass}
-
+% ---------- Notation ----------
+\section*{Notation}
 \newcommand{\ddfrac}[2]{\frac{\partial #1}{\partial #2}}
 \RenewDocumentCommand{\v}{m g}{%
-  \IfNoValueTF{#2}
-    {\mathbf{#1}}%
-    {\mathbf{#1}_{#2}}%
+  \IfNoValueTF{#2}{\mathbf{#1}}{\mathbf{#1}_{#2}}%
 }
+\newcommand{\had}{\odot}
 \newcommand{\colnorm}[1]{\|#1\|_{1,\text{col}}}
 \newcommand{\rownorm}[1]{\|#1\|_{1,\text{row}}}
 
-Let $\v{x} \in \mathbb{R}^{B\times K}$ be the layer input, $\v{z} \in \mathbb{R}^{K\times M}$ be the layer weights, $\v{r} \in \mathbb{R}^{M}$ be the layer biases, $c \in \mathbb{R}$ be the curvature.
+Bold symbols denote vectors/matrices. Indexing uses single subscripts (e.g., $\v{zn}{m}$, $\v{yn}{b}$). Hadamard product is $\had$. Broadcasting follows PyTorch: $\v{\lambda}\in\mathbb{R}^B$ broadcasts across columns; $\v{eb},\v{ebi},\v{zn}\in\mathbb{R}^M$ broadcast across rows.
 
-\begin{align*}
-    \lambda_b &:= \frac{2}{1 - c \cdot \sum_{k}^K\v{x}{bk}^2} \in \mathbb{R}^{B} \\
-    \v{zn} &:= ||z||_0 \in \mathbb{R}^{M} \\
-    \v{p} &:= \frac{\sqrt{c} \odot \lambda \odot \v{x} \v{z}}{\v{zn}} \in \mathbb{R}^{B\times M} \\
-    \v{b} &:= 2 \odot \sqrt{c} \odot \v{r}; \quad \v{eb} := \exp(\v{b}); \quad \v{ebi} := \v{eb}^{-1} \in \mathbb{R}^{M} \\
-    \v{p} &:= 0.5 \odot \left((\v{eb} + \v{ebi}) \odot \frac{\sqrt{c} \odot \lambda}{\v{zn}} \odot \v{x} \v{z} - (\v{eb} - \v{ebi}) * (\lambda - 1)\right) \\
-    \v{d} &:= 2 \odot \v{zn} \odot \log(\v{p} + \sqrt{\v{p}^2 + 1}); \quad \v{ed} := \exp(\v{d}); \quad \v{edi} := \v{ed}^{-1}\\
-    \v{num} &:= \frac{\v{ed} + \v{edi}}{2 * \sqrt{c}} \\
-    \v{den} &:= 1 + \sqrt{1 + c * \sum_{m}^M \v{num}{m}^2} \\
-    \v{y} &:= \frac{\v{num}}{\v{den}} \\
-    \v{yn} &:= \sqrt{\sum_b^B \v{y}{b}} \\
-    \v{py} &:= \v{y} \odot \frac{\v{mn}}{\v{yn}}, \text{where } \v{mn}{i} = \min(\v{yn}{i}, \frac{1 - \epsilon}{\sqrt{c + \exp(-15)}}) \\
-\end{align*}
+% ---------- Forward ----------
+\section{Forward pass}
 
-\section{Backward pass w.r.t. $\v{x}$}
+Given $\v{x}\in\mathbb{R}^{B\times K}$, $\v{z}\in\mathbb{R}^{K\times M}$, $\v{r}\in\mathbb{R}^{M}$, $c\in\mathbb{R}$:
+\begin{align}
+\lambda_b &:= \frac{2}{1 - c\sum_{k=1}^K \v{x}{bk}^2}\in\mathbb{R},\quad \v{\lambda}\equiv(\lambda_b)_{b=1}^B \\
+\v{zn}{m} &:= \Big(\sum_{k=1}^K \v{z}{km}^2\Big)^{1/2},\quad \v{zn}\in\mathbb{R}^M \\
+\v{xz} &:= \v{x}\v{z}\in\mathbb{R}^{B\times M} \\
+\v{b} &:= 2\sqrt{c}\,\had\,\v{r},\quad
+\v{eb}:=\exp(\v{b}),\ \v{ebi}:=\v{eb}^{-1} \\
+\v{p} &:= \tfrac12\Big[(\v{eb}+\v{ebi})\,\had\,\Big( \tfrac{\sqrt{c}\,\v{\lambda}}{\v{zn}} \,\had\, \v{xz}\Big)\ -\ (\v{eb}-\v{ebi})\,\had\,(\v{\lambda}-\mathbf{1})\Big] \in \mathbb{R}^{B\times M} \\
+\v{d} &:= 2\,\v{zn}\,\had\, \log\!\big(\v{p}+\sqrt{\v{p}^2+\mathbf{1}}\big) \\
+\v{ed} &:= \exp(\v{d}),\quad \v{edi}:=\v{ed}^{-1} \\
+\v{num} &:= \tfrac{1}{2\sqrt{c}}\,(\v{ed}+\v{edi}) \\
+\v{den}{b} &:= 1 + \sqrt{\,1 + c \sum_{m=1}^M \v{num}{bm}^2\,},\quad \v{den}\equiv(\v{den}{b})_{b=1}^B \\
+\v{y} &:= \tfrac{\v{num}}{\v{den}} \\
+\v{yn}_b &:= \Big(\sum_{m=1}^M \v{y}{bm}^2\Big)^{1/2},\quad \v{yn}\equiv(\v{yn}_b)_{b=1}^B \\
+\v{mn}_i &:= \min\!\Big(\v{yn}{i},\,\tfrac{1-\epsilon}{\sqrt{\,c+\exp(-15)\,}}\Big),\quad \v{mn}\equiv(\v{mn}_i)_{i=1}^B \\
+\v{py} &:= \v{y}\,\had\,\frac{\v{mn}}{\v{yn}}.
+\end{align}
 
-\begin{align*}
-    \ddfrac{\mathcal{L}}{\v{x}{bk}} &= \sum_m^M \v{dout}{bm} \ddfrac{\v{py}{bm}}{\v{x}{bk}} = \sum_m \v{dout}{bm} \ddfrac{\v{y}{bm} / \v{yn}{b} * \v{mn}{b}}{\v{x}{bk}} \\
-    &= \v{mn}{b} \sum_m \v{dout}{bm} \left(\v{yn}{b}^{-1} \ddfrac{\v{y}{bm}}{\v{x}{bk}} - \v{y}{bm} \cdot \v{yn}{b}^{-2} \cdot \ddfrac{\v{yn}{b}}{\v{x}{bk}} \right) \\
-    &= \v{mn}{b} \sum_m \v{dout}{bm} \left(\v{yn}{b}^{-1} \ddfrac{\v{y}{bm}}{\v{x}{bk}} - \v{y}{bm} \cdot \v{yn}{b}^{-2} \cdot \ddfrac{\sqrt{\sum_i^M \v{y}_{bi}^2}}{\v{x}{bk}} \right) \\
-    &= \v{mn}{b} \sum_m \v{dout}{bm} \left(\v{yn}{b}^{-1} \ddfrac{\v{y}{bm}}{\v{x}{bk}} - \v{y}{bm} \cdot \v{yn}{b}^{-3} \cdot \frac{1}{2} \ddfrac{\sum_i^M \v{y}_{bi}^2}{\v{x}{bk}} \right) \\
-    &= \v{mn}{b} \sum_m \v{dout}{bm} \left(\v{yn}{b}^{-1} \ddfrac{\v{y}{bm}}{\v{x}{bk}} - \v{y}{bm} \cdot \v{yn}{b}^{-3} \cdot \underbrace{\sum_i^M \v{y}_{bi} \ddfrac{ \v{y}_{bi}}{\v{x}{bk}}}_{\text{does not depend on $m$}} \right) \\
-    &= \v{mn}{b} \v{yn}{b}^{-1} \left( \sum_m \v{dout}{bm} \ddfrac{\v{y}{bm}}{\v{x}{bk}} \right) - \left(\v{yn}{b}^{-3} \sum_m \v{y}{bm} \cdot \v{dout}{bm} \right) \sum_m \v{y}{bm} \ddfrac{\v{y}{bm}}{\v{x}{bk}} \\
-    &= \sum_m \underbrace{\left[ \v{mn}{b} \v{yn}{b}^{-1} \v{dout}{bm} - \left(\v{yn}{b}^{-3} \sum_i^M \v{y}{bm} \cdot \v{dout}{bm} \right) \right]}_{:= \v{A}{bm}} \ddfrac{\v{y}{bm}}{\v{x}{bk}} \\
-    &= \sum_m \v{A}{bm} \left( \frac{1}{\v{den}{b}} \ddfrac{\v{num}{bm}}{\v{x}{bk}} - \frac{\v{num}{bm}}{\v{den}{b}^{2}} \ddfrac{\v{den}{b}}{\v{x}{bk}} \right) \\
-    &= \sum_m \v{A}{bm} \left( \frac{1}{\v{den}{b}} \ddfrac{\v{num}{bm}}{\v{x}{bk}} - \frac{\v{num}{bm}}{\v{den}{b}^{2}} \ddfrac{1 + \sqrt{1 + c \cdot \sum_i^M \v{num}{bm}^2}}{\v{x}{bk}} \right) \\
-    &= \sum_m \v{A}{bm} \left( \frac{1}{\v{den}{b}} \ddfrac{\v{num}{bm}}{\v{x}{bk}} - \frac{\v{num}{bm}}{\v{den}{b}^{2}} \frac{c}{\v{den}{b} - 1} \sum_i^M \v{num}{bi} \ddfrac{\v{num}{bi}}{\v{x}{bk}} \right) \\
-    &= \left( \sum_m \v{A}{bm} \frac{1}{\v{den}{b}} \ddfrac{\v{num}{bm}}{\v{x}{bk}} \right) - \underbrace{\left(\sum_m \frac{\v{num}{bm}}{\v{den}{b}^{2}} \frac{c}{\v{den}{b} - 1} \right)}_{= \frac{c}{\v{den}{b} \cdot (\v{den}{b} - 1)} \sum_m \v{y}{bm} =: \v{b}{b}} \left( \sum_m \v{num}{bm} \ddfrac{\v{num}{bm}}{\v{x}{bk}} \right) \\
-    &= \sum_m \underbrace{\left( \v{A}{bm} \frac{1}{\v{den}{b}} - \v{num}{bm} \v{b}{b} \right)}_{:= \v{C}{bm}} \ddfrac{\v{num}{bm}}{\v{x}{bk}} \\
-    &= \sum_m \underbrace{\v{C}{bm} (\v{ed}_{bm} - \v{edi}_{bm})}_{:= \v{D}{bm}} \ddfrac{\v{d}{bm}}{\v{x}{bk}}
-\end{align*}
+% \paragraph{Implementation notes.}
+% Clamp denominators (\texttt{zn}, \texttt{yn}, \texttt{den-1}, \texttt{p+\sqrt{p^2+1}}) with a small \texttt{eps}. All divisions are elementwise with PyTorch broadcasting.
 
-\begin{align*}
-    \ddfrac{\mathcal{L}}{\v{x}{bk}} = &\sum_m 2 \cdot \underbrace{\v{D}{bm} \cdot \v{zn}{m} \cdot \frac{1 + \sqrt{\v{p}{bm}^2 + 1}}{\v{p}{bm} + \sqrt{\v{p}{bm}^2 + 1}}}_{:= \v{E}{bm}} \ddfrac{\v{p}{bm}}{\v{x}{bk}} \\
-    = &\sum_m \cancel{2} \v{E}{bm} \left( \cancel{\frac{1}{2}} (\v{eb}{m} + \v{ebi}{m}) \frac{\sqrt{c}}{\v{zn}{m}} \left( \ddfrac{\lambda_b}{\v{x}{bk}} \cdot \v{x} \v{z}{bm} + \ddfrac{\v{x} \v{z}{bm}}{\v{x}{bk}} \cdot \lambda_b \right) - \cancel{\frac{1}{2}} (\v{eb}{m} - \v{ebi}{m}) \ddfrac{\lambda_b}{\v{x}{bk}} \right) \\
-    \ddfrac{\lambda_b}{\v{x}{bk}} = & \ddfrac{\frac{2}{1 - c \sum_j^K \v{x}{bj}^2}}{\v{x}{bk}} = -\frac{\lambda_b^2}{2} \cdot \ddfrac{-c \cdot \sum_i^M \v{x}{bj}^2}{\v{x}{bk}} = \lambda_b^2 \v{x}{bk} \\
-    \ddfrac{\v{x} \v{z}{bm}}{\v{x}{bk}} =& \ddfrac{\sum_j^K \v{x}{bj} \cdot \v{z}{jm}}{\v{x}{bk}} = \v{z}{km} \\
-    \Rightarrow \ddfrac{\mathcal{L}}{\v{x}{bk}} = &\sum_m \v{E}{bm} \cdot (\v{eb}{m} + \v{ebi}{m}) \cdot \frac{\sqrt{c}}{\v{zn}{m}} \cdot \lambda_b^2 \cdot\v{x}{bk} \cdot \v{x} \v{z}{bm} \\
-    &+ \sum_m \v{E}{bm} \cdot (\v{eb}{m} + \v{ebi}{m}) \cdot \frac{\sqrt{c}}{\v{zn}{m}} \cdot \lambda_b \cdot \v{z}{km} \\
-    &- \sum_m \v{E}{bm} \cdot (\v{eb}{m} - \v{ebi}{m}) \cdot \lambda_b^2 \cdot \v{x}{bk} \\
-    =& \lambda_b^2 \cdot \v{x}{bk} \cdot \sum_m \underbrace{\v{E}{bm} \cdot \left( \sqrt{c} \cdot \v{x} \v{z}{bm} \cdot (\v{eb}{m} + \v{ebi}{m}) \cdot \v{zn}{m}^{-1} - (\v{eb}{m} - \v{ebi}{m}) \right)}_{:= \v{F}{bm}}\\
-    &+ \sqrt{c} \cdot \lambda_b \cdot \sum_m \underbrace{\v{E}{bm} \cdot (\v{eb}{m} + \v{ebi}{m}) \cdot \v{zn}{m}^{-1}}_{:= \v{G}{bm}} \cdot \v{z}{km} \\
-    \Rightarrow \ddfrac{\mathcal{L}}{\v{x}} =& \lambda^2 \odot \v{x} \odot \rownorm{\v{F}} + \sqrt{c} \odot \lambda \odot \v{G} \v{z},\quad
-\end{align*}
+% ---------- Backward w.r.t. x ----------
+\section{Backward w.r.t. $\v{x}$}
 
-where $\rownorm{\v{F}}$ represents the vector containing the L1 norm of each row in $\v{F}$.
+Let $\v{dout}:=\ddfrac{\mathcal{L}}{\v{py}}\in\mathbb{R}^{B\times M}$. For arbitrary indices $b,k$:
+\begin{align}
+\ddfrac{\mathcal{L}}{\v{x}{bk}}
+&= \sum_m \v{dout}{bm}\,\ddfrac{\v{py}{bm}}{\v{x}{bk}}
+= \v{mn}_b \sum_m \v{dout}{bm}\Big(\v{yn}_b^{-1}\ddfrac{\v{y}{bm}}{\v{x}{bk}} - \v{y}{bm}\,\v{yn}_b^{-2}\ddfrac{\v{yn}_b}{\v{x}{bk}}\Big) \\
+\ddfrac{\v{yn}_b}{\v{x}{bk}} &= \v{yn}_b^{-1}\sum_i \v{y}{bi}\,\ddfrac{\v{y}{bi}}{\v{x}{bk}} \\
+\Rightarrow\ \ddfrac{\mathcal{L}}{\v{x}{bk}}
+&= \sum_m \underbrace{\Big[\v{mn}_b\,\v{yn}_b^{-1}\,\v{dout}{bm}
+- \v{yn}_b^{-3}\Big(\sum_i \v{y}{bi}\v{dout}{bi}\Big)\v{y}{bm}\Big]}_{:=\,\v{A}{bm}}
+\ddfrac{\v{y}{bm}}{\v{x}{bk}}.
+\end{align}
+Since $\v{y}{bm}=\v{num}{bm}/\v{den}{b}$ and $\v{den}{b} = 1+\sqrt{1+c\sum_i \v{num}{bi}^2}$,
+\begin{align}
+\ddfrac{\v{y}{bm}}{\v{x}{bk}}
+&= \frac{1}{\v{den}{b}}\ddfrac{\v{num}{bm}}{\v{x}{bk}}
+- \frac{\v{num}{bm}}{\v{den}{b}^2}\frac{c}{\v{den}{b}-1}\sum_i \v{num}{bi}\ddfrac{\v{num}{bi}}{\v{x}{bk}} \\
+&= \Big(\frac{\v{A}{bm}}{\v{den}{b}} - \v{num}{bm}\,\v{b}{b}\Big)\ddfrac{\v{num}{bm}}{\v{x}{bk}},\quad
+\v{b}{b}:=\frac{c}{\v{den}{b}(\v{den}{b}-1)}\sum_{i} \v{y}{bi}.
+\end{align}
+Now $\v{num}=\tfrac{1}{2\sqrt{c}}(\v{ed}+\v{edi})$ implies
+\begin{align}
+\ddfrac{\v{num}{bm}}{\v{x}{bk}}
+= \underbrace{\frac{\v{ed}{bm}-\v{edi}{bm}}{2\sqrt{c}}}_{:=\,\tfrac{1}{2\sqrt{c}}\v{\Delta}{bm}}\ \ddfrac{\v{d}{bm}}{\v{x}{bk}}.
+\end{align}
+Define $\v{C}{bm}:=\frac{\v{A}{bm}}{\v{den}{b}} - \v{num}{bm}\,\v{b}{b}$ and
+\[
+\v{D}{bm}:=\frac{\v{C}{bm}\,(\v{ed}{bm}-\v{edi}{bm})}{2\sqrt{c}}.
+\]
+With $\v{d}{bm}=2\,\v{zn}{m}\,\log\!\big(\v{p}{bm}+\sqrt{\v{p}{bm}^2+1}\big)$:
+\begin{align}
+\ddfrac{\v{d}{bm}}{\v{x}{bk}}
+= 2\,\v{zn}{m}\,\frac{1+\sqrt{\v{p}{bm}^2+1}}{\v{p}{bm}+\sqrt{\v{p}{bm}^2+1}}\,\ddfrac{\v{p}{bm}}{\v{x}{bk}}.
+\end{align}
+Let
+\[
+\v{E}{bm}:= \v{D}{bm}\,\v{zn}{m}\,\frac{1+\sqrt{\v{p}{bm}^2+1}}{\v{p}{bm}+\sqrt{\v{p}{bm}^2+1}}.
+\]
+Then
+\begin{align}
+\ddfrac{\mathcal{L}}{\v{x}{bk}}
+= \sum_m 2\,\v{E}{bm}\,\ddfrac{\v{p}{bm}}{\v{x}{bk}}.
+\end{align}
+From the definition of $\v{p}$:
+\begin{align}
+\ddfrac{\v{p}{bm}}{\v{x}{bk}}
+&= \tfrac12(\v{eb}{m}+\v{ebi}{m})\,\frac{\sqrt{c}}{\v{zn}{m}}
+\Big(\ddfrac{\lambda_b}{\v{x}{bk}}\,\v{xz}{bm} + \lambda_b\,\ddfrac{\v{xz}{bm}}{\v{x}{bk}}\Big)
+- \tfrac12(\v{eb}{m}-\v{ebi}{m})\,\ddfrac{\lambda_b}{\v{x}{bk}},
+\\
+\ddfrac{\lambda_b}{\v{x}{bk}} &= \lambda_b^2\,\v{x}{bk},\qquad
+\ddfrac{\v{xz}{bm}}{\v{x}{bk}} = \v{z}{km}.
+\end{align}
+Collecting terms:
+\begin{align}
+\ddfrac{\mathcal{L}}{\v{x}{bk}}
+&= \lambda_b^2\,\v{x}{bk}\,\sum_m \underbrace{\v{E}{bm}\Big(\sqrt{c}\,\v{xz}{bm}\,\frac{\v{eb}{m}+\v{ebi}{m}}{\v{zn}{m}} - (\v{eb}{m}-\v{ebi}{m})\Big)}_{:=\,\v{F}{bm}} \\
+&\quad + \sqrt{c}\,\lambda_b \sum_m \underbrace{\v{E}{bm}\,\frac{\v{eb}{m}+\v{ebi}{m}}{\v{zn}{m}}}_{:=\,\v{G}{bm}}\,\v{z}{km}.
+\end{align}
+Vectorized:
+\[
+\boxed{\ \ddfrac{\mathcal{L}}{\v{x}} = \v{\lambda}^2 \had \v{x} \had \rownorm{\v{F}}\ +\ \sqrt{c}\,\v{\lambda}\had \v{G}\,\v{z}\ }\ \in\mathbb{R}^{B\times K}.
+\]
 
-\begin{align*}
-    \ddfrac{\mathcal{L}}{\v{z}{km}} = & \sum_b^B \v{dout}{bm} \ddfrac{\v{py}{bm}}{\v{z}{km}} = \sum_b^B \v{dout}{bm} \ddfrac{\v{y}{bm} / \v{yn}{b} \cdot \v{mn}{b}}{\v{z}{km}} \\
-    =& \sum_b \v{mn}{b} \cdot \v{dout}{bm} \cdot \left(\v{yn}{b}^{-1} \cdot \ddfrac{\v{y}{bm}}{\v{z}{km}} - \v{y}{bm} \cdot \v{yn}{b}^{-3} \cdot \frac{1}{2} \cdot \underbrace{\ddfrac{\sum_i^M \v{y}_{bi}^2}{\v{z}{km}}}_{=2 \cdot \v{y}{bm} \cdot \ddfrac{\v{y}_bm}{\v{z}{km}}} \right) \\
-    =& \sum_b \underbrace{\v{mn}{b} \cdot \v{dout}{bm} \cdot \v{yn}{b}^{-1} \left( 1 - \left( \frac{\v{y}{bm}}{\v{yn}{b}} \right)^2 \right)}_{:= \v{H}{bm}} \cdot \ddfrac{\v{y}{bm}}{\v{z}{km}} \\
-    =& \sum_b \v{H}{bm} \ddfrac{\v{num}{bm} / \v{den}{b}}{\v{z}{km}} = \sum_b \v{H}{bm} \left( \frac{1}{\v{den}{b}} \ddfrac{\v{num}{bm}}{\v{z}{km}} - \frac{\v{num}{bm}}{\v{den}{b}^2} \frac{c}{\v{den}{b} - 1} \sum_i^M \v{num}{bi} \underbrace{\ddfrac{\v{num}{bi}}{\v{z}{km}}}_{=0 \text{ when } i\neq m}  \right) \\
-    =& \sum_b \underbrace{\v{H}{bm} \frac{1}{\v{den}{b}} \left( 1 - \frac{c \cdot \v{num}{bm}^2}{\v{den}{b} (\v{den}{b} - 1)} \right)}_{:= \v{J}{bm}} \ddfrac{\v{num}{bm}}{\v{z}{km}} \\
-    =& \sum_b \underbrace{\v{J}{bm} \frac{\v{ed}{bm} + \v{edi}{bm}}{\sqrt{c}}}_{\v{L}{bm}} \cdot \ddfrac{\v{d}{bm}}{\v{z}{km}} \\
-    =& \sum_b \underbrace{\v{J}{bm} \frac{\v{ed}{bm} + \v{edi}{bm}}{\sqrt{c}}}_{\v{L}{bm}} \cdot \left( \log \left( \v{p}{bm} + \sqrt{\v{p}{bm}^2 + 1} \right) \ddfrac{\v{zn}{m}}{\v{z}{km}} + \frac{\v{zn}{m}}{\sqrt{\v{p}{bm}^2 + 1}} \ddfrac{\v{p}{bm}}{\v{z}{km}} \right) \\
-    \ddfrac{\v{zn}{m}}{\v{z}{km}} =& \ddfrac{\sqrt{\sum_j^K \v{z}{jm}^2}}{\v{z}{km}} = \frac{1}{2 \cdot \v{zn}{m}} \ddfrac{\sum_j^K \v{z}{jm}^2}{\v{z}{km}} = \frac{1}{2 \cdot \v{zn}{m}} \cdot 2 \cdot \sum_j^K \v{z}{jm} \ddfrac{\v{z}{km}}{\v{z}{km}} = \frac{\v{z}{km}}{\v{zn}{m}} \\
-    \ddfrac{\v{p}{km}}{\v{z}{km}} =& \frac{1}{2} \ddfrac{}{\v{z}{km}} \left[ \frac{(\v{eb}{m} + \v{ebi}{m}) \cdot \sqrt{c} \cdot \lambda_b \cdot \v{(xz)}{bm}}{\v{zn}{m}} - \underbrace{(\v{eb}{m} - \v{ebi}{m})(\lambda_b - 1)}_{\text{does not depend on } \v{z}{km}} \right] \\
-    =& \frac{(\v{eb}{m} + \v{ebi}{m}) \cdot \sqrt{c} \cdot \lambda_b}{2} \ddfrac{\frac{\v{(xz)}{bm}}{\v{zn}{m}}}{\v{z}{km}}\\
-    =& \frac{(\v{eb}{m} + \v{ebi}{m}) \cdot \sqrt{c} \cdot \lambda_b}{2} \left( \v{zn}{m} \underbrace{\ddfrac{\v{(xz)}{bm}}{\v{z}{km}}}_{=\v{x}{bk}} - \v{zn}{m}^{-2} \cdot \v{(xz)}{bm} \underbrace{\ddfrac{\v{zn}{m}}{\v{z}{km}}}_{=\frac{\v{z}{km}}{\v{zn}{m}}} \right) \\
-    =& \frac{(\v{eb}{m} + \v{ebi}{m}) \cdot \sqrt{c} \cdot \lambda_b}{2} \left( \v{zn}{m} \cdot \v{x}{bk} - \v{zn}{m}^{-1} \cdot \v{(xz)}{bm} \cdot \v{z}{km} \right) \\
-\end{align*}
+% ---------- Backward w.r.t. z ----------
+\section{Backward w.r.t. $\v{z}$}
 
-\begin{align*}
-    \Rightarrow \ddfrac{\mathcal{L}}{\v{z}{km}} =& \sum_b \underbrace{\frac{\v{L}{bm} \cdot \log \left(\v{p}{bm} + \sqrt{\v{p}{bm}^2 + 1} \right)}{\v{zn}{m}} }_{:= \v{N}{bm}} \cdot \v{z}{km} \\
-    &+ \sum_b \underbrace{\v{L}{bm} \cdot \frac{\v{zn}{m}}{\sqrt{\v{p}{bm}^2 + 1}} \frac{(\v{eb}{m} + \v{ebi}{m}) \cdot \sqrt{c} \cdot \lambda_b}{2} \cdot \v{zn}{m}}_{:= \v{P}{bm}} \cdot \v{x}{bk} \\
-    &+ \sum_b \underbrace{\v{L}{bm} \cdot \frac{\cancel{\v{zn}{m}}}{\sqrt{\v{p}{bm}^2 + 1}} \frac{(\v{eb}{m} + \v{ebi}{m}) \cdot \sqrt{c} \cdot \lambda_b}{2} \cdot \cancel{\v{zn}{m}^{-1}} \cdot \v{(xz)}{bm}}_{:= \v{Q}{bm}} \cdot \v{z}{km} \\
-    =& \left[ \v{z}{mk} \cdot \sum_b (\v{N} + \v{Q})_{bm} \right] + \sum_b \v{(x^T)}{kb} \cdot \v{P}{bm} \\
-    \Rightarrow \ddfrac{\mathcal{L}}{\v{z}} =& \v{z} \odot \colnorm{\v{N} + \v{Q}} + \v{x^T} \v{P}
-\end{align*}
+\begin{align}
+\ddfrac{\mathcal{L}}{\v{z}{km}}
+&= \sum_b \v{dout}{bm}\,\ddfrac{\v{py}{bm}}{\v{z}{km}}
+= \sum_b \underbrace{\v{mn}_b\,\v{dout}{bm}\,\v{yn}_b^{-1}\Big(1-(\v{y}{bm}/\v{yn}_b)^2\Big)}_{:=\,\v{H}{bm}}\ddfrac{\v{y}{bm}}{\v{z}{km}}.
+\end{align}
+As before,
+\begin{align}
+\ddfrac{\v{y}{bm}}{\v{z}{km}}
+&= \underbrace{\frac{1}{\v{den}{b}}\Big(1-\frac{c\,\v{num}{bm}^2}{\v{den}{b}(\v{den}{b}-1)}\Big)}_{:=\,\v{J}{bm}}
+\ddfrac{\v{num}{bm}}{\v{z}{km}},\\
+\ddfrac{\v{num}{bm}}{\v{z}{km}}
+&= \frac{\v{ed}{bm}-\v{edi}{bm}}{2\sqrt{c}}\ \ddfrac{\v{d}{bm}}{\v{z}{km}}.
+\end{align}
+Define
+\[
+\v{L}{bm}:=\v{H}{bm}\,\v{J}{bm}\,\frac{\v{ed}{bm}-\v{edi}{bm}}{2\sqrt{c}}.
+\]
+With $\v{d}{bm}=2\,\v{zn}{m}\,\log\!\big(\v{p}{bm}+\sqrt{\v{p}{bm}^2+1}\big)$:
+\begin{align}
+\ddfrac{\v{d}{bm}}{\v{z}{km}}
+&= 2\,\log\!\big(\v{p}{bm}+\sqrt{\v{p}{bm}^2+1}\big)\,\ddfrac{\v{zn}{m}}{\v{z}{km}}
++ \frac{2\,\v{zn}{m}}{\sqrt{\v{p}{bm}^2+1}}\,\ddfrac{\v{p}{bm}}{\v{z}{km}},
+\\
+\ddfrac{\v{zn}{m}}{\v{z}{km}} &= \frac{\v{z}{km}}{\v{zn}{m}},\qquad
+\ddfrac{\v{p}{bm}}{\v{z}{km}}
+= \tfrac12(\v{eb}{m}+\v{ebi}{m})\,\sqrt{c}\,\lambda_b\,
+\Big(\v{x}{bk}\,\v{zn}{m}^{-1} - \v{xz}{bm}\,\v{z}{km}\,\v{zn}{m}^{-3}\Big).
+\end{align}
+Collecting and cancelling the factor $2$ with $1/(2\sqrt{c})$ inside $\v{L}{bm}$, define
+\begin{align}
+\v{N}{bm} &:= \frac{\v{L}{bm}}{\v{zn}{m}}\,\log\!\big(\v{p}{bm}+\sqrt{\v{p}{bm}^2+1}\big),\\
+\v{P}{bm} &:= \v{L}{bm}\,\frac{\v{zn}{m}}{\sqrt{\v{p}{bm}^2+1}}
+\cdot (\v{eb}{m}+\v{ebi}{m})\,\sqrt{c}\,\lambda_b\,\tfrac{1}{2}\cdot \v{zn}{m},\\
+\v{Q}{bm} &:= \v{L}{bm}\,\frac{1}{\sqrt{\v{p}{bm}^2+1}}
+\cdot (\v{eb}{m}+\v{ebi}{m})\,\sqrt{c}\,\lambda_b\,\tfrac{1}{2}\cdot \v{xz}{bm}.
+\end{align}
+Then
+\[
+\ddfrac{\mathcal{L}}{\v{z}{km}}
+= \sum_b \Big[(\v{N}{bm}+\v{Q}{bm})\,\v{z}{km} + \v{P}{bm}\,\v{x}{bk}\Big],
+\quad
+\boxed{\ \ddfrac{\mathcal{L}}{\v{z}} = \v{z}\,\had\,\colnorm{\v{N}+\v{Q}}\ +\ \v{x}^\top \v{P}\ }\in\mathbb{R}^{K\times M}.
+\]
 
-\begin{align*}
-    \ddfrac{\mathcal{L}}{\v{r}_m} =& \sum_b \v{L}{bm} \ddfrac{\v{d}{bm}}{\v{r}{m}} \\
-    =& \sum_b \underbrace{\frac{\v{L}{bm} \cdot \v{zn}{m}}{\sqrt{\v{p}{bm}^2 + 1}}}_{:= \v{R}{bm}} \cdot 2 \ddfrac{\v{p}{bm}}{\v{r}{m}} \\
-    =& \sum_b \v{R}{bm} \left[ \ddfrac{(\v{eb}{m} + \v{ebi}{m})}{\v{r}{m}} \cdot \frac{c \cdot \lambda_b}{\v{zn}{m}} + \ddfrac{(\v{eb}{m} + \v{ebi}{m})}{\v{r}{m}} (\lambda_b - 1) \right] \\
-    =& \sum_b \v{R}{bm} \left[ 2\sqrt{c} \cdot \frac{c \cdot \lambda_b}{\v{zn}{m}} \cdot (\v{eb}{m} - \v{ebi}{m}) + 2\sqrt{c} (\lambda_b - 1) \cdot (\v{eb}{m} + \v{ebi}{m}) \right] \\
-    =& 2\sqrt{c}\left(\left[\frac{c}{\v{zn}{m}}(\v{eb}{m}-\v{ebi}{m})+(\v{eb}{m}+\v{ebi}{m})\right]\sum_b \v{R}{bm}\lambda_b -(\v{eb}{m}+\v{ebi}{m})\sum_b \v{R}{bm}\right) \\
-    \Rightarrow \ddfrac{\mathcal{L}}{\v{r}} =& 2 \sqrt{c} \cdot \left( \left[ c\cdot \frac{\v{eb} - \v{ebi}}{\v{zn}} + \v{eb} + \v{ebi} \right] \colnorm{\v{R} \odot \lambda} + \colnorm{R} \right)
-\end{align*}
+% ---------- Backward w.r.t. r ----------
+\section{Backward w.r.t. $\v{r}$}
+
+Start from the same chain with $\v{H}$ and $\v{J}$:
+\[
+\ddfrac{\mathcal{L}}{\v{r}{m}}
+= \sum_b \underbrace{\v{H}{bm}\,\v{J}{bm}\,\frac{\v{ed}{bm}-\v{edi}{bm}}{2\sqrt{c}}}_{:=\,\v{L}{bm}}
+\ddfrac{\v{d}{bm}}{\v{r}{m}},
+\]
+and
+\begin{align}
+\ddfrac{\v{d}{bm}}{\v{r}{m}}
+&= \frac{2\,\v{zn}{m}}{\sqrt{\v{p}{bm}^2+1}}\ \ddfrac{\v{p}{bm}}{\v{r}{m}},\qquad
+\ddfrac{\v{p}{bm}}{\v{r}{m}}
+= \sqrt{c}\Big[\tfrac12(\v{eb}{m}-\v{ebi}{m})\,\frac{c\,\lambda_b}{\v{zn}{m}}
++ \tfrac12(\v{eb}{m}+\v{ebi}{m})\,(\lambda_b-1)\Big],
+\end{align}
+since $\v{b}=2\sqrt{c}\,\v{r}$. Define
+\[
+\v{R}{bm}:=\frac{\v{L}{bm}\,\v{zn}{m}}{\sqrt{\v{p}{bm}^2+1}},
+\]
+then
+\[
+\ddfrac{\mathcal{L}}{\v{r}{m}}
+= 2\sqrt{c}\left(
+\left[\frac{c}{\v{zn}{m}}(\v{eb}{m}-\v{ebi}{m}) + (\v{eb}{m}+\v{ebi}{m})\right]\sum_b \v{R}{bm}\lambda_b
+- (\v{eb}{m}+\v{ebi}{m})\sum_b \v{R}{bm}
+\right)
+\]
+\[
+\boxed{\ \ddfrac{\mathcal{L}}{\v{r}} =
+2\sqrt{c}\left(
+\Big[c\,\tfrac{\v{eb}-\v{ebi}}{\v{zn}}+\v{eb}+\v{ebi}\Big]\had \colnorm{\v{R}\had\v{\lambda}}
+\ -\ (\v{eb}+\v{ebi})\had \colnorm{\v{R}}
+\right)\ }\in\mathbb{R}^{M}.
+\]
 
 \end{document}
