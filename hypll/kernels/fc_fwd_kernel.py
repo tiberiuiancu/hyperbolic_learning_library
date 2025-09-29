@@ -44,26 +44,26 @@ def get_autotune_configs(device=None):
 
 
 @triton.jit
-def _single_block_fwd(
+def single_block_fwd(
     b,
     lam,
     zn,
     xz,
     cs,
 ):
-    p0 = cs * lam / zn * xz
     eb = tl.exp(b)
     ebi = 1 / eb
-    p = 0.5 * ((eb + ebi) * p0 - (eb - ebi) * (lam - 1))
-
-    sq_p2_1 = tl.sqrt(p * p + 1)
-    log_p_sq = tl.log(p + sq_p2_1)
-    d = 2.0 * zn * log_p_sq
-    ed = tl.exp(d)
+    eb_sum = eb + ebi
+    eb_dif = eb - ebi
+    P = 0.5 * (eb_sum * (cs * lam / zn * xz) - eb_dif * (lam - 1))
+    sq_p2_1 = tl.sqrt(P * P + 1)
+    log_p_sq = tl.log(P + sq_p2_1)
+    D = 2.0 * zn * log_p_sq
+    ed = tl.exp(D)
     edi = 1 / ed
-    num = 0.5 * (ed - edi) / cs
-
-    return sq_p2_1, log_p_sq, eb, ebi, ed, edi, num
+    ed_dif = ed - edi
+    num = 0.5 * ed_dif / cs
+    return sq_p2_1, log_p_sq, eb_sum, eb_dif, ed_dif, P, num
 
 
 @triton.autotune(
@@ -121,7 +121,7 @@ def _poincare_fc_fwd_kernel(
         b = tl.load(B_ptr + m_ids, mask=mask_m, other=0.0)
 
         # we only need num
-        _1, _2, _3, _4, _5, _6, num = _single_block_fwd(b, lam, zn, xz, cs)
+        _1, _2, _3, _4, _5, _6, num = single_block_fwd(b, lam, zn, xz, cs)
 
         den_acc += tl.sum(num * num)
 
@@ -166,15 +166,13 @@ def _project_where_kernel(
     offs_m = col_block * BLOCK_M + tl.arange(0, BLOCK_M)
     mask = offs_m < M
 
-    # load memory
     num = tl.load(num_ptr + b * stride_num_b + offs_m, mask=mask, other=0.0)
     den = tl.load(den_ptr + b)
     yn = tl.load(yn_ptr + b)
     max_norm = tl.load(max_norm_ptr + b)
-    y = num / den
 
-    if yn > max_norm:
-        y *= max_norm / yn
+    y = num / den
+    y *= max_norm / yn
 
     tl.store(out_ptr + b * stride_out_b + offs_m, y, mask=mask)
 
@@ -261,7 +259,7 @@ def poincare_fc_project_fwd_triton(
     )
 
     if return_cache:
-        return y_proj, (x, z, xz, zn, b, lam, den, c, cs)
+        return y_proj, (x, z, xz, zn, b, lam, den, yn, mn, c, cs)
     return y_proj
 
 
@@ -313,6 +311,7 @@ def poincare_fc_fwd_project_ref(
 
     if return_cache:
         return projected_y, (
+            projected_y,
             x,
             z,
             xz,
@@ -320,6 +319,8 @@ def poincare_fc_fwd_project_ref(
             b,
             lam.squeeze(),
             den.squeeze(),
+            norm,
+            mn,
             c,
             cs.item(),
         )
