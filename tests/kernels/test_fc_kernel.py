@@ -59,7 +59,7 @@ def test_fwd(bias_flag: bool):
 
     y, cache = poincare_fc_fwd_project_ref(x, z, r, c, return_cache=True)
     y_triton, cache_triton = poincare_fc_project_fwd_triton(x, z, r, c, return_cache=True)
-    cache_names = ["x", "z", "xz", "zn", "b", "lam", "den", "c", "cs", "has_bias"]
+    cache_names = ["x", "z", "xz", "zn", "b", "lam", "den", "yn", "max_norm", "c", "cs"]
 
     for n, c, ct in zip(cache_names, cache, cache_triton):
         assert_allclose(c, ct, n)

@@ -52,18 +52,17 @@ def _poincare_fc_bwd_kernel(
     lam_ptr,
     den_ptr,
     yn_ptr,
-    mn_ptr,
     dout_ptr,
     c,
     cs,
+    max_norm,
     # backward pass precomputations
     y_sum_ptr,
-    dout_y_sum_ptr,
     ##### outputs
-    cslam_T5_ptr,
+    T5_ptr,
     T10_ptr,
     T911_norm_ptr,
-    LT4_norm_ptr,
+    T4_norm_ptr,
     dr_ptr,
     ##### strides
     Y_stride_b: tl.constexpr,
@@ -85,13 +84,11 @@ def _poincare_fc_bwd_kernel(
     XZ_ptr += pid_b * XZ_stride_b
     Y_ptr += pid_b * Y_stride_b
     dout_ptr += pid_b * dout_stride_b
-    cslam_T5_ptr += pid_b * cslam_T5_stride_b
+    T5_ptr += pid_b * cslam_T5_stride_b
     T10_ptr += pid_b * T10_stride_b
 
     # perform scalar reads
-    mn = tl.load(mn_ptr + pid_b)
     yn = tl.load(yn_ptr + pid_b)
-    dout_y_sum = tl.load(dout_y_sum_ptr + pid_b)
     den = tl.load(den_ptr + pid_b)
     y_sum = tl.load(y_sum_ptr + pid_b)
     lam = tl.load(lam_ptr + pid_b)
@@ -110,24 +107,25 @@ def _poincare_fc_bwd_kernel(
     deni_1 = deni * (1 / (den - 1))
     yni = 1 / yn
     zni = 1 / zn
-    _tmp1 = mn * yni * dout
-    T1 = _tmp1 - yni * yni * yni * dout_y_sum * Y
+    if yn > max_norm:
+        T1 = dout * max_norm * yni * (1 - Y * Y * yni * yni)
+    else:
+        T1 = dout
     ed_div = ed_dif / (2 * cs)
     t1 = c * deni_1 * y_sum
     T2 = (T1 * deni - num * t1) * ed_div
-    _tmp3 = P + sq_p2_1
-    T3 = T2 * zn * (1 + sq_p2_1) / _tmp3
+    T3 = T2 * zn / sq_p2_1
     eb_div = eb_sum * zni
-    T4 = T3 * (cs * XZ * eb_div - eb_dif)
-    T5 = T3 * eb_div
-    L2_T4_norm = tl.sum(T4) * lam * lam
+    T5 = cs * lam * T3 * eb_div
+    T4 = c * T3 * (cs * XZ * eb_div - eb_dif)
+    T4_norm = tl.sum(T4) * lam * lam
 
     # write outputs for dx
-    tl.store(cslam_T5_ptr + offs_m, cs * lam * T5, mask=mask_m)
-    tl.atomic_add(LT4_norm_ptr + pid_b, L2_T4_norm)
+    tl.store(T5_ptr + offs_m, T5, mask=mask_m)
+    tl.atomic_add(T4_norm_ptr + pid_b, T4_norm)
 
     # calculate outputs for dz
-    T6 = _tmp1 * (1 - Y * Y * yni * yni)
+    T6 = T1  # TODO: decrease T counters for conistency, and correct derivatives as well
     T7 = deni * (1 - c * num * num * deni_1)
     T8 = T6 * T7 * ed_div
     T9 = T8 * zni * log_p_sq
@@ -146,7 +144,7 @@ def _poincare_fc_bwd_kernel(
     tl.atomic_add(dr_ptr + offs_m, dr_tmp, mask=mask_m)
 
 
-def poincare_fc_bwd_triton(dout, Y, X, Z, XZ, zn, b, lam, den, yn, mn, c, cs):
+def poincare_fc_bwd_triton(dout, Y, X, Z, XZ, zn, b, lam, den, yn, max_norm, c, cs):
     # TODO: sanity checks
     B, K = X.shape
     K2, M = Z.shape
@@ -158,15 +156,14 @@ def poincare_fc_bwd_triton(dout, Y, X, Z, XZ, zn, b, lam, den, yn, mn, c, cs):
 
     dX = torch.empty_like(X)
     dZ = torch.empty_like(Z)
-    dr = torch.empty_like(b)
+    dr = torch.zeros_like(b)
 
-    LT4_norm = torch.zeros_like(lam)  # (lambda * T4)_norm
-    cslam_T5 = torch.empty_like(XZ)
-    T911_norm = torch.empty_like(b)
-    T10 = torch.empty_like(cslam_T5)
+    T4_norm = torch.zeros_like(lam)
+    T5 = torch.empty_like(XZ)
+    T911_norm = torch.zeros_like(b)
+    T10 = torch.empty_like(T5)
 
     y_sum = Y.sum(dim=1)
-    dout_y_sum = torch.inner(dout, Y)
 
     grid = lambda meta: (B, triton.cdiv(M, meta["BLOCK_M"]))
     _poincare_fc_bwd_kernel[grid](
@@ -177,27 +174,26 @@ def poincare_fc_bwd_triton(dout, Y, X, Z, XZ, zn, b, lam, den, yn, mn, c, cs):
         lam,
         den,
         yn,
-        mn,
         dout,
         c,
         cs,
+        max_norm,
         y_sum,
-        dout_y_sum,
-        cslam_T5,
+        T5,
         T10,
         T911_norm,
-        LT4_norm,
+        T4_norm,
         dr,
         Y.stride(0),
         XZ.stride(0),
         dout.stride(0),
-        cslam_T5.stride(0),
+        T5.stride(0),
         T10.stride(0),
         M,
     )
 
     # perform the matrix multiply and addition in one kernel call
-    dX = torch.addmm(X * LT4_norm[:, None], cslam_T5, Z.T, alpha=cs, beta=1)
-    dZ = torch.addmm(Z * T911_norm[None, :], X.T, T10, alpha=1, beta=1)
+    dX = torch.addmm(X * T4_norm[:, None], T5, Z.T)
+    dZ = torch.addmm(Z * T911_norm[None, :], X.T, T10)
 
     return dX, dZ, dr

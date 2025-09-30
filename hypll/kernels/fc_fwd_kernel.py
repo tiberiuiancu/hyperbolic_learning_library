@@ -233,13 +233,12 @@ def poincare_fc_project_fwd_triton(
     )
 
     if eps < 0:
-        eps = 1e-15
+        eps = 4e-3
 
     max_norm = 1e15
-    if c > 0:
-        max_norm = (1 - eps) / ((c_val + eps) ** 0.5)
+    if c_val > 0:
+        max_norm = (1 - eps) / ((c_val + 1e-15) ** 0.5)
 
-    # calculate mn as a constant so it's easier to backprop
     mn = torch.where(yn > max_norm, max_norm, yn)
 
     # allocate space for result
@@ -259,7 +258,7 @@ def poincare_fc_project_fwd_triton(
     )
 
     if return_cache:
-        return y_proj, (x, z, xz, zn, b, lam, den, yn, mn, c, cs)
+        return y_proj, (x, z, xz, zn, b, lam, den, yn, max_norm, c, cs)
     return y_proj
 
 
@@ -302,16 +301,15 @@ def poincare_fc_fwd_project_ref(
         else:
             eps = 1e-5
 
-    maxnorm = (1 - eps) / ((c + 1e-15) ** 0.5)
-    maxnorm = torch.where(c.gt(0), maxnorm, c.new_full((), 1e15))
+    max_norm = (1 - eps) / ((c + 1e-15) ** 0.5)
+    max_norm_tensor = torch.where(c.gt(0), max_norm, c.new_full((), 1e15))
 
     norm = y.norm(dim=dim, keepdim=True, p=2).clamp_min(1e-15)
-    mn = torch.where(norm > maxnorm, maxnorm, norm)
-    projected_y = y / norm * mn
+    mn = torch.where(norm > max_norm_tensor, max_norm_tensor, norm)
+    yp = y / norm * mn
 
     if return_cache:
-        return projected_y, (
-            projected_y,
+        return yp, (
             x,
             z,
             xz,
@@ -320,9 +318,9 @@ def poincare_fc_fwd_project_ref(
             lam.squeeze(),
             den.squeeze(),
             norm,
-            mn,
+            max_norm.item(),
             c,
             cs.item(),
         )
 
-    return projected_y
+    return yp
