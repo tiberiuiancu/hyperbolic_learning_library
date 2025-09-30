@@ -122,6 +122,7 @@ def _poincare_fc_bwd_kernel(
 def _dL_dY(
     # inputs
     dout_ptr,
+    Y_ptr,
     dout_y_sum_ptr,
     num_ptr,
     yn_ptr,
@@ -143,6 +144,7 @@ def _dL_dY(
     pid_m = tl.program_id(1)
 
     dout_ptr += dout_stride_b * pid_b
+    Y_ptr += Y_stride_b * pid_b
     num_ptr += num_stride_b * pid_b
     T1_ptr += T1_stride_b * pid_b
 
@@ -157,8 +159,9 @@ def _dL_dY(
         T1 = dout
     else:
         dout_y_sum = tl.load(dout_y_sum_ptr + pid_b)
+        Y = tl.load(Y_ptr + offs_m, mask=mask_m, other=0.0)
         yni = 1 / yn
-        T1 = max_norm * yni * (dout - yni * yni * dout_y_sum)
+        T1 = max_norm * yni * (dout - yni * yni * Y * dout_y_sum)
 
     tl.atomic_add(T1_num_ptr + pid_b, tl.sum(num * T1))
     tl.store(T1_ptr + offs_m, T1, mask=mask_m)
@@ -181,6 +184,7 @@ def poincare_fc_bwd_triton(dout, Y, X, Z, XZ, zn, b, lam, num, den, yn, max_norm
     grid = lambda meta: (B, triton.cdiv(M, meta["BLOCK_M"]))
     _dL_dY[grid](
         dout,
+        Y,
         dout_y_sum,
         num,
         yn,
