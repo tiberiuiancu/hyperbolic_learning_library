@@ -72,6 +72,7 @@ def _poincare_fc_bwd_kernel(
     T10_stride_b: tl.constexpr,
     ##### dimensions
     M: tl.constexpr,
+    B: tl.constexpr,
     BLOCK_M: tl.constexpr,
 ):
     # calculate which block we're working on
@@ -190,6 +191,7 @@ def poincare_fc_bwd_triton(dout, Y, X, Z, XZ, zn, b, lam, den, yn, max_norm, c, 
         T5.stride(0),
         T10.stride(0),
         M,
+        B,
     )
 
     # perform the matrix multiply and addition in one kernel call

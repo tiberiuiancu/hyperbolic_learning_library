@@ -20,8 +20,8 @@
 \NewDocumentCommand{\ev}{m g}{%
   \IfNoValueTF{#2}{e^{\mathbf{#1}}}{e^{\mathbf{#1}_{#2}}}%
 }
-\newcommand{\colnorm}[1]{\|#1\|_{1,\text{col}}}
-\newcommand{\rownorm}[1]{\|#1\|_{1,\text{row}}}
+\newcommand{\colnorm}[1]{\left(\sum_{\text{col}} #1\right)}
+\newcommand{\rownorm}[1]{\left(\sum_{\text{row}} #1\right)}
 \newcommand{\lam}{\bm{\lambda}}
 
 \NewDocumentCommand{\T}{m g}{%
@@ -72,25 +72,22 @@ Let $\v{dout}:=\ddfrac{\mathcal{L}}{\v{py}}\in\mathbb{R}^{B\times M}$. For arbit
     & \text{if } \v{yn}_b > \mathcal{C}.
 \end{cases} \\
 \Rightarrow\ \ddfrac{\mathcal{L}}{\v{X}{bk}}
-&= \sum_m \underbrace{\v{dout}{bm}\,\ddfrac{\v{py}{bm}}{\v{Y}{bm}}}_{:=\,\T{1}{bm}} \ddfrac{\v{Y}{bm}}{\v{X}{bk}}.
+&= \sum_m \underbrace{\v{dout}{bm}\,\ddfrac{\v{py}{bm}}{\v{Y}{bm}}}_{=\ddfrac{\mathcal{L}}{\v{Y}{bm}}:=\,\T{1}{bm}} \ddfrac{\v{Y}{bm}}{\v{X}{bk}}.
 \end{align}
 Since $\v{Y}{bm}=\v{num}{bm}/\v{den}{b}$ and $\v{den}{b} = 1+\sqrt{1+c\sum_i \v{num}{bi}^2}$,
 \begin{align}
 \ddfrac{\v{Y}{bm}}{\v{X}{bk}}
-&= \frac{1}{\v{den}{b}}\ddfrac{\v{num}{bm}}{\v{X}{bk}}
-- \frac{\v{num}{bm}}{\v{den}{b}^2}\frac{c}{\v{den}{b}-1}\sum_i \v{num}{bi}\ddfrac{\v{num}{bi}}{\v{X}{bk}} \\
-&= \Big(\frac{\T{1}{bm}}{\v{den}{b}} - \v{num}{bm}\,\t{1}{b}\Big)\ddfrac{\v{num}{bm}}{\v{X}{bk}},\quad
-\t{1}{b}:=\frac{c}{\v{den}{b}(\v{den}{b}-1)}\sum_{i} \v{Y}{bi}.
+&= \frac{1}{\v{den}{b}}\ddfrac{\v{num}{bm}}{\v{X}{bk}} - \frac{\v{num}{bm}}{\v{den}{b}^2}\frac{c}{\v{den}{b}-1}\sum_i \v{num}{bi}\ddfrac{\v{num}{bi}}{\v{X}{bk}} \\
+\Rightarrow \ddfrac{\mathcal{L}}{\v{X}{bk}} &= \left( \sum_m \T{1}{bm}\,\frac{1}{\v{den}{b}}\ddfrac{\v{num}{bm}}{\v{X}{bk}} \right) - \left( \frac{c\,\sum_m \T{1}{bm} \v{num}{bm}}{\v{den}{b}^2\,(\v{den}{b}-1)}\sum_i \v{num}{bi}\ddfrac{\v{num}{bi}}{\v{X}{bk}} \right) \\
+&= \left( \sum_m \frac{\T{1}{bm}}{\v{den}{b}}\ddfrac{\v{num}{bm}}{\v{X}{bk}} - \frac{c\,\sum_i \T{1}{bi} \v{num}{bi}}{\v{den}{b}^2\,(\v{den}{b}-1)} \v{num}{bm}\ddfrac{\v{num}{bm}}{\v{X}{bk}} \right) \\
+&= \sum_m \left( \frac{\T{1}{bm}}{\v{den}{b}} - \frac{c\,\sum_i \T{1}{bi}\, \v{num}{bi}}{\v{den}{b}^2\,(\v{den}{b}-1)} \v{num}{bm} \right) \ddfrac{\v{num}{bm}}{\v{X}{bk}}  \\
+&= \sum_m \underbrace{\frac{1}{\v{den}{b}} \left(\T{1}{bm} - \frac{c\,\v{num}{bm}}{\v{den}{b}\,(\v{den}{b}-1)} \sum_i \T{1}{bi}\, \v{num}{bi}  \right)}_{=\ddfrac{\mathcal{L}}{\v{num}{bm}}:=\T{2}{bm}} \ddfrac{\v{num}{bm}}{\v{X}{bk}}  \\
 \end{align}
 Now $\v{num}=\tfrac{1}{2\sqrt{c}}(\ev{D}+\ev{-D})$ implies
 \begin{align}
 \ddfrac{\v{num}{bm}}{\v{X}{bk}}
 = \frac{\ev{D}{bm}-\ev{-D}{bm}}{2\sqrt{c}}\ \ddfrac{\v{D}{bm}}{\v{X}{bk}}.
 \end{align}
-Define 
-\[
-\T{2}{bm}:=\left(\frac{\T{1}{bm}}{\v{den}{b}} - \v{num}{bm}\,\t{1}{b}\right)\ \frac{\ev{D}{bm} - \ev{-D}{bm}}{2\sqrt{c}}
-\]
 With $\v{D}{bm}=2\,\v{zn}{m}\,\log\!\big(\v{P}{bm}+\sqrt{\v{P}{bm}^2+1}\big)$:
 \begin{align}
 \ddfrac{\v{D}{bm}}{\v{X}{bk}}
@@ -98,9 +95,9 @@ With $\v{D}{bm}=2\,\v{zn}{m}\,\log\!\big(\v{P}{bm}+\sqrt{\v{P}{bm}^2+1}\big)$:
 \end{align}
 Let
 \[
-\T{3}{bm}:= \T{2}{bm}\,\frac{\v{zn}{m}}{\sqrt{\v{P}{bm}^2+1}}
+\T{3}{bm}:= \frac{1}{2}\,\ddfrac{\mathcal{L}}{\v{P}{bm}} = \T{2}{bm}\,\frac{\ev{D}{bm}-\ev{-D}{bm}}{2\sqrt{c}}\,\frac{\v{zn}{m}}{\sqrt{\v{P}{bm}^2+1}}
 \]
-Then
+then
 \begin{align}
 \ddfrac{\mathcal{L}}{\v{X}{bk}}
 = \sum_m 2\,\T{3}{bm}\,\ddfrac{\v{P}{bm}}{\v{X}{bk}}.
@@ -137,14 +134,14 @@ Vectorized:
 As before,
 \begin{align}
 \ddfrac{\v{Y}{bm}}{\v{Z}{km}}
-&= \underbrace{\frac{1}{\v{den}{b}}\Big(1-\frac{c\,\v{num}{bm}^2}{\v{den}{b}(\v{den}{b}-1)}\Big)}_{:=\,\T{7}{bm}}
+&= \frac{1}{\v{den}{b}}\Big(1-\frac{c\,\v{num}{bm}^2}{\v{den}{b}(\v{den}{b}-1)}\Big)
 \ddfrac{\v{num}{bm}}{\v{Z}{km}},\\
 \ddfrac{\v{num}{bm}}{\v{Z}{km}}
 &= \frac{\ev{D}{bm}-\ev{-D}{bm}}{2\sqrt{c}}\ \ddfrac{\v{D}{bm}}{\v{Z}{km}}.
 \end{align}
 Define
 \[
-\T{8}{bm}:=\T{6}{bm}\,\T{7}{bm}\,\frac{\ev{D}{bm}-\ev{-D}{bm}}{2\sqrt{c}}.
+\T{6}{bm}:= \ddfrac{\mathcal{L}}{\v{D}{bm}} = \T{1}{bm}\,\frac{1}{\v{den}{b}}\Big(1-\frac{c\,\v{num}{bm}^2}{\v{den}{b}(\v{den}{b}-1)}\Big)\,\frac{\ev{D}{bm}-\ev{-D}{bm}}{2\sqrt{c}}.
 \]
 With $\v{D}{bm}=2\,\v{zn}{m}\,\log\!\big(\v{P}{bm}+\sqrt{\v{P}{bm}^2+1}\big)$:
 \begin{align}
@@ -157,20 +154,20 @@ With $\v{D}{bm}=2\,\v{zn}{m}\,\log\!\big(\v{P}{bm}+\sqrt{\v{P}{bm}^2+1}\big)$:
 = \tfrac12(\ev{b}{m}+\ev{-b}{m})\,\sqrt{c}\,\lam_b\,
 \Big(\v{X}{bk}\,\v{zn}{m}^{-1} - \v{XZ}{bm}\,\v{Z}{km}\,\v{zn}{m}^{-3}\Big).
 \end{align}
-Collecting and cancelling the factor $2$ with $1/(2\sqrt{c})$ inside $\T{8}{bm}$, define
+Collecting and cancelling the factor $2$ with $1/(2\sqrt{c})$ inside $\T{6}{bm}$, define
 \begin{align}
-\T{9}{bm} &:= \frac{\T{8}{bm}}{\v{zn}{m}}\,\log\!\big(\v{P}{bm}+\sqrt{\v{P}{bm}^2+1}\big),\\
-\T{10}{bm} &:= \T{8}{bm}\,\frac{\v{zn}{m}}{\sqrt{\v{P}{bm}^2+1}}
+\T{7}{bm} &:= \frac{\T{6}{bm}}{\v{zn}{m}}\,\log\!\big(\v{P}{bm}+\sqrt{\v{P}{bm}^2+1}\big),\\
+\T{8}{bm} &:= \T{6}{bm}\,\frac{\v{zn}{m}}{\sqrt{\v{P}{bm}^2+1}}
 \cdot (\ev{b}{m}+\ev{-b}{m})\,\sqrt{c}\,\lam_b\,\tfrac{1}{2}\cdot \v{zn}{m},\\
-\T{11}{bm} &:= \T{8}{bm}\,\frac{1}{\sqrt{\v{P}{bm}^2+1}}
+\T{9}{bm} &:= \T{6}{bm}\,\frac{1}{\sqrt{\v{P}{bm}^2+1}}
 \cdot (\ev{b}{m}+\ev{-b}{m})\,\sqrt{c}\,\lam_b\,\tfrac{1}{2}\cdot \v{XZ}{bm}.
 \end{align}
 Then
 \[
 \ddfrac{\mathcal{L}}{\v{Z}{km}}
-= \sum_b \Big[(\T{9}{bm}+\T{11}{bm})\,\v{Z}{km} + \T{10}{bm}\,\v{X}{bk}\Big],
+= \sum_b \Big[(\T{7}{bm}+\T{9}{bm})\,\v{Z}{km} + \T{8}{bm}\,\v{X}{bk}\Big],
 \quad
-\boxed{\ \ddfrac{\mathcal{L}}{\v{Z}} = \v{Z}\,\odot\,\colnorm{\T{9}+\T{11}}\ +\ \v{X}^\top \T{10}\ }\in\mathbb{R}^{K\times M}.
+\boxed{\ \ddfrac{\mathcal{L}}{\v{Z}} = \v{Z}\,\odot\,\colnorm{\T{7}+\T{9}}\ +\ \v{X}^\top \T{8}\ }\in\mathbb{R}^{K\times M}.
 \]
 
 % ---------- Backward w.r.t. r ----------
@@ -179,8 +176,7 @@ Then
 Start from the same chain with $\T{6}$ and $\T{7}$:
 \[
 \ddfrac{\mathcal{L}}{\v{r}{m}}
-= \sum_b \underbrace{\T{6}{bm}\,\T{7}{bm}\,\frac{\ev{D}{bm}-\ev{-D}{bm}}{2\sqrt{c}}}_{:=\,\T{8}{bm}}
-\ddfrac{\v{D}{bm}}{\v{r}{m}},
+= \sum_b \T{6}{bm}\,\ddfrac{\v{D}{bm}}{\v{r}{m}},
 \]
 and
 \begin{align}
@@ -192,21 +188,21 @@ and
 \end{align}
 since $\v{b}=2\sqrt{c}\,\v{r}$. Define
 \[
-\T{12}{bm}:=\frac{\T{8}{bm}\,\v{zn}{m}}{\sqrt{\v{P}{bm}^2+1}},
+\T{10}{bm}:=\frac{\T{6}{bm}\,\v{zn}{m}}{\sqrt{\v{P}{bm}^2+1}},
 \]
 then
 \[
 \ddfrac{\mathcal{L}}{\v{r}{m}}
 = 2\sqrt{c}\left(
-\left[\frac{c}{\v{zn}{m}}(\ev{b}{m}-\ev{-b}{m}) + (\ev{b}{m}+\ev{-b}{m})\right]\sum_b \T{12}{bm}\lam_b
-- (\ev{b}{m}+\ev{-b}{m})\sum_b \T{12}{bm}
+\left[\frac{c}{\v{zn}{m}}(\ev{b}{m}-\ev{-b}{m}) + (\ev{b}{m}+\ev{-b}{m})\right]\sum_b \T{10}{bm}\lam_b
+- (\ev{b}{m}+\ev{-b}{m})\sum_b \T{10}{bm}
 \right)
 \]
 \[
 \boxed{\ \ddfrac{\mathcal{L}}{\v{r}} =
 2\sqrt{c}\left(
-\Big[c\,\tfrac{\ev{b}-\ev{-b}}{\v{zn}}+\ev{b}+\ev{-b}\Big]\odot \colnorm{\T{12}\odot\v{\lam}}
-\ -\ (\ev{b}+\ev{-b})\odot \colnorm{\T{12}}
+\Big[c\,\tfrac{\ev{b}-\ev{-b}}{\v{zn}}+\ev{b}+\ev{-b}\Big]\odot \colnorm{\T{10}\odot\v{\lam}}
+\ -\ (\ev{b}+\ev{-b})\odot \colnorm{\T{10}}
 \right)\ }\in\mathbb{R}^{M}.
 \]
 
