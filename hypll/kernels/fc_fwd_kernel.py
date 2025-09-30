@@ -63,7 +63,7 @@ def single_block_fwd(
     edi = 1 / ed
     ed_dif = ed - edi
     num = 0.5 * ed_dif / cs
-    return sq_p2_1, log_p_sq, eb_sum, eb_dif, ed_dif, P, num
+    return sq_p2_1, log_p_sq, eb_sum, eb_dif, ed_dif, num
 
 
 @triton.autotune(
@@ -121,7 +121,7 @@ def _poincare_fc_fwd_kernel(
         b = tl.load(B_ptr + m_ids, mask=mask_m, other=0.0)
 
         # we only need num
-        _1, _2, _3, _4, _5, _6, num = single_block_fwd(b, lam, zn, xz, cs)
+        _1, _2, _3, _4, _5, num = single_block_fwd(b, lam, zn, xz, cs)
 
         den_acc += tl.sum(num * num)
 
@@ -258,7 +258,7 @@ def poincare_fc_project_fwd_triton(
     )
 
     if return_cache:
-        return y_proj, (x, z, xz, zn, b, lam, den, yn, max_norm, c, cs)
+        return y_proj, (x, z, xz, zn, b, lam, num, den, yn, max_norm, c, cs)
     return y_proj
 
 
@@ -316,6 +316,7 @@ def poincare_fc_fwd_project_ref(
             zn,
             b,
             lam.squeeze(),
+            num,
             den.squeeze(),
             norm,
             max_norm.item(),
