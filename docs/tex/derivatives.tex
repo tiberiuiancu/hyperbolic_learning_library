@@ -64,15 +64,13 @@ Let $\v{dout}:=\ddfrac{\mathcal{L}}{\v{py}}\in\mathbb{R}^{B\times M}$. For arbit
 \begin{align}
 \ddfrac{\mathcal{L}}{\v{X}{bk}}
 &= \sum_m \v{dout}{bm}\,\ddfrac{\v{py}{bm}}{\v{X}{bk}}
-= \sum_m \v{dout}{bm}\,\ddfrac{\v{py}{bm}}{\v{Y}{bm}}\,\ddfrac{\v{Y}{bm}}{\v{X}{bk}} \\
-\ddfrac{\v{py}{bm}}{\v{Y}{bm}} &=
+= \sum_m \underbrace{\left( \sum_j \v{dout}{bj} \ddfrac{\v{py}{bm}}{\v{y}{bj}} \right)}_{:=\,\T{1}{bm}} \,\ddfrac{\v{Y}{bm}}{\v{X}{bk}} \\
+\T{1}{bm} &=
 \begin{cases}
-  1, & \text{if } \v{yn}_b \le \mathcal{C}, \\[6pt]
-  \dfrac{\mathcal{C}}{\v{yn}_b}\left(1 - \dfrac{\v{Y}{bm}^2}{\v{yn}_b^2}\right),
+  \v{dout}{bm}, & \text{if } \v{yn}_b \le \mathcal{C}, \\[6pt]
+  \frac{\mathcal{C}}{\v{yn}{b}}\,\left(\v{dout}{bm} - \v{yn}{b}^{-2}\,\sum_j \v{dout}{bj}\,\v{Y}{bj}\right),
     & \text{if } \v{yn}_b > \mathcal{C}.
 \end{cases} \\
-\Rightarrow\ \ddfrac{\mathcal{L}}{\v{X}{bk}}
-&= \sum_m \underbrace{\v{dout}{bm}\,\ddfrac{\v{py}{bm}}{\v{Y}{bm}}}_{=\ddfrac{\mathcal{L}}{\v{Y}{bm}}:=\,\T{1}{bm}} \ddfrac{\v{Y}{bm}}{\v{X}{bk}}.
 \end{align}
 Since $\v{Y}{bm}=\v{num}{bm}/\v{den}{b}$ and $\v{den}{b} = 1+\sqrt{1+c\sum_i \v{num}{bi}^2}$,
 \begin{align}
@@ -81,7 +79,7 @@ Since $\v{Y}{bm}=\v{num}{bm}/\v{den}{b}$ and $\v{den}{b} = 1+\sqrt{1+c\sum_i \v{
 \Rightarrow \ddfrac{\mathcal{L}}{\v{X}{bk}} &= \left( \sum_m \T{1}{bm}\,\frac{1}{\v{den}{b}}\ddfrac{\v{num}{bm}}{\v{X}{bk}} \right) - \left( \frac{c\,\sum_m \T{1}{bm} \v{num}{bm}}{\v{den}{b}^2\,(\v{den}{b}-1)}\sum_i \v{num}{bi}\ddfrac{\v{num}{bi}}{\v{X}{bk}} \right) \\
 &= \left( \sum_m \frac{\T{1}{bm}}{\v{den}{b}}\ddfrac{\v{num}{bm}}{\v{X}{bk}} - \frac{c\,\sum_i \T{1}{bi} \v{num}{bi}}{\v{den}{b}^2\,(\v{den}{b}-1)} \v{num}{bm}\ddfrac{\v{num}{bm}}{\v{X}{bk}} \right) \\
 &= \sum_m \left( \frac{\T{1}{bm}}{\v{den}{b}} - \frac{c\,\sum_i \T{1}{bi}\, \v{num}{bi}}{\v{den}{b}^2\,(\v{den}{b}-1)} \v{num}{bm} \right) \ddfrac{\v{num}{bm}}{\v{X}{bk}}  \\
-&= \sum_m \underbrace{\frac{1}{\v{den}{b}} \left(\T{1}{bm} - \frac{c\,\v{num}{bm}}{\v{den}{b}\,(\v{den}{b}-1)} \sum_i \T{1}{bi}\, \v{num}{bi}  \right)}_{=\ddfrac{\mathcal{L}}{\v{num}{bm}}:=\T{2}{bm}} \ddfrac{\v{num}{bm}}{\v{X}{bk}}  \\
+&= \sum_m \underbrace{\frac{1}{\v{den}{b}} \left(\T{1}{bm} - \frac{c\,\v{num}{bm}}{\v{den}{b}\,(\v{den}{b}-1)} \sum_i \T{1}{bi}\, \v{num}{bi}  \right)}_{:=\T{2}{bm}} \ddfrac{\v{num}{bm}}{\v{X}{bk}}  \\
 \end{align}
 Now $\v{num}=\tfrac{1}{2\sqrt{c}}(\ev{D}+\ev{-D})$ implies
 \begin{align}
@@ -95,7 +93,7 @@ With $\v{D}{bm}=2\,\v{zn}{m}\,\log\!\big(\v{P}{bm}+\sqrt{\v{P}{bm}^2+1}\big)$:
 \end{align}
 Let
 \[
-\T{3}{bm}:= \frac{1}{2}\,\ddfrac{\mathcal{L}}{\v{P}{bm}} = \T{2}{bm}\,\frac{\ev{D}{bm}-\ev{-D}{bm}}{2\sqrt{c}}\,\frac{\v{zn}{m}}{\sqrt{\v{P}{bm}^2+1}}
+\T{3}{bm}:= \T{2}{bm}\,\frac{\ev{D}{bm}-\ev{-D}{bm}}{2\sqrt{c}}\,\frac{\v{zn}{m}}{\sqrt{\v{P}{bm}^2+1}}
 \]
 then
 \begin{align}
