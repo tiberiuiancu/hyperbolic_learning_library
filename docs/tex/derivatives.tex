@@ -46,7 +46,7 @@ Given $\v{X}\in\mathbb{R}^{B\times K}$, $\v{Z}\in\mathbb{R}^{K\times M}$, $\v{r}
 \v{b} &:= 2\sqrt{c}\,\odot\,\v{r}\\
 \v{P} &:= \tfrac12\Big[(\ev{b}+\ev{-b})\,\odot\,\Big( \tfrac{\sqrt{c}\,\v{\lam}}{\v{zn}} \,\odot\, \v{XZ}\Big)\ -\ (\ev{b}-\ev{-b})\,\odot\,(\lam-\mathbf{1})\Big] \in \mathbb{R}^{B\times M} \\
 \v{D} &:= 2\odot \v{zn}\,\odot\, \log\!\big(\v{P}+\sqrt{\v{P}^2+\mathbf{1}}\big) \\
-\v{num} &:= \tfrac{1}{2\sqrt{c}}\,(\ev{D}+\ev{-D}) \\
+\v{num} &:= \tfrac{1}{2\sqrt{c}}\,(\ev{D}-\ev{-D}) \\
 \v{den}{b} &:= 1 + \sqrt{\,1 + c \sum_{m=1}^M \v{num}{bm}^2\,},\quad \v{den}\equiv(\v{den}{b})_{b=1}^B \\
 \v{Y} &:= \tfrac{\v{num}}{\v{den}} \\
 \v{yn}_b &:= \Big(\sum_{m=1}^M \v{Y}{bm}^2\Big)^{1/2},\quad \v{yn}\equiv(\v{yn}_b)_{b=1}^B \\

@@ -86,8 +86,8 @@ def _poincare_fc_bwd_kernel(
 
     # T4: multiply by lambda after summation to save compute
     eb_div = eb_sum * zni
-    T4 = c * T3 * (cs * XZ * eb_div - eb_dif)
-    T4_norm = tl.sum(T4) * lam * lam
+    T4_tmp = T3 * (cs * XZ * eb_div - eb_dif)
+    T4_norm = tl.sum(T4_tmp) * lam * lam * c
 
     # T5
     T5 = cs * lam * T3 * eb_div
@@ -119,7 +119,7 @@ def _poincare_fc_bwd_kernel(
     key=["B", "M"],
 )
 @triton.jit
-def _dL_dY(
+def _dL_dY_kernel(
     # inputs
     dout_ptr,
     Y_ptr,
@@ -182,7 +182,7 @@ def poincare_fc_bwd_triton(dout, Y, X, Z, XZ, zn, b, lam, num, den, yn, max_norm
     T1_num = torch.zeros_like(lam)
     dout_y_sum = torch.einsum("ij,ij->i", dout, Y)
     grid = lambda meta: (B, triton.cdiv(M, meta["BLOCK_M"]))
-    _dL_dY[grid](
+    _dL_dY_kernel[grid](
         dout,
         Y,
         dout_y_sum,

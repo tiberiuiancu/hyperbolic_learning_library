@@ -9,8 +9,8 @@ class FastPoincareFC(torch.autograd.Function):
         ctx, x: torch.Tensor, z: torch.Tensor, r: torch.Tensor = None, c: float = 1.0, dim: int = -1
     ):
         x = x.movedim(source=dim, destination=-1)
-        y, (x, z, xz, zn, b, lam, num, den, yn, max_norm, c, cs) = poincare_fc_project_fwd_triton(
-            x, z, r, c, return_cache=True
+        py, (y, x, z, xz, zn, b, lam, num, den, yn, max_norm, c, cs) = (
+            poincare_fc_project_fwd_triton(x, z, r, c, return_cache=True)
         )
         ctx.save_for_backward(y, x, z, xz, zn, b, lam, num, den, yn)
         ctx.c = c
@@ -18,7 +18,7 @@ class FastPoincareFC(torch.autograd.Function):
         ctx.max_norm = max_norm
         ctx.dim = dim
         ctx.has_bias = r is not None
-        return y.movedim(source=-1, destination=dim)
+        return py.movedim(source=-1, destination=dim)
 
     @staticmethod
     def backward(ctx, dout):

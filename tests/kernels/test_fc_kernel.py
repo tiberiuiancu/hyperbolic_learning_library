@@ -25,7 +25,7 @@ def _rand(*shape, grad: bool = False):
 def assert_allclose(x, y, message: str = ""):
     assert type(x) == type(y), message
     if isinstance(x, float):
-        assert isinstance(y, float) and abs(x - y) < ATOL, message
+        assert abs(x - y) < ATOL, message
     elif not isinstance(x, torch.Tensor):
         assert x == y, message
     else:
@@ -57,14 +57,17 @@ def test_fwd(bias_flag: bool):
     z = _rand(K, M)
     r = _rand(M) if bias_flag else None
 
-    y, cache = poincare_fc_fwd_project_ref(x, z, r, c, return_cache=True)
-    y_triton, cache_triton = poincare_fc_project_fwd_triton(x, z, r, c, return_cache=True)
-    cache_names = ["x", "z", "xz", "zn", "b", "lam", "den", "yn", "max_norm", "c", "cs"]
+    out, cache = poincare_fc_fwd_project_ref(x, z, r, c, return_cache=True)
+    out_trit, cache_triton = poincare_fc_project_fwd_triton(x, z, r, c, return_cache=True)
+    cache_names = ["y", "x", "z", "xz", "zn", "b", "lam", "num", "den", "yn", "max_norm", "c", "cs"]
+    scalars = ["max_norm", "c", "cs"]
 
     for n, c, ct in zip(cache_names, cache, cache_triton):
+        if n in scalars:
+            assert type(c) == type(ct) == float, f"{n}: {c} | {ct}"
         assert_allclose(c, ct, n)
 
-    assert_allclose(y, y_triton)
+    assert_allclose(out, out_trit)
 
 
 @pytest.mark.parametrize("bias_flag", [True])

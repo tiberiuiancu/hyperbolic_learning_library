@@ -150,31 +150,39 @@ def _poincare_fc_fwd_kernel(
 )
 @triton.jit
 def _project_where_kernel(
+    y_ptr,
     num_ptr,
     den_ptr,
     yn_ptr,
     max_norm_ptr,
-    out_ptr,
+    py_ptr,
+    stride_y_b: tl.constexpr,
+    stride_num_b: tl.constexpr,
+    stride_py_b: tl.constexpr,
     B: tl.constexpr,
     M: tl.constexpr,
-    stride_num_b: tl.constexpr,
-    stride_out_b: tl.constexpr,
     BLOCK_M: tl.constexpr,
 ):
-    b = tl.program_id(0)
-    col_block = tl.program_id(1)
-    offs_m = col_block * BLOCK_M + tl.arange(0, BLOCK_M)
-    mask = offs_m < M
+    pid_b = tl.program_id(0)
+    pid_m = tl.program_id(1)
 
-    num = tl.load(num_ptr + b * stride_num_b + offs_m, mask=mask, other=0.0)
-    den = tl.load(den_ptr + b)
-    yn = tl.load(yn_ptr + b)
-    max_norm = tl.load(max_norm_ptr + b)
+    offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
+    mask_m = offs_m < M
+
+    num_ptr += pid_b * stride_num_b
+    y_ptr += pid_b * stride_y_b
+    py_ptr += pid_b * stride_py_b
+
+    num = tl.load(num_ptr + offs_m, mask=mask_m, other=0.0)
+    den = tl.load(den_ptr + pid_b)
+    yn = tl.load(yn_ptr + pid_b)
+    max_norm = tl.load(max_norm_ptr + pid_b)
 
     y = num / den
-    y *= max_norm / yn
+    py = y * max_norm / yn
 
-    tl.store(out_ptr + b * stride_out_b + offs_m, y, mask=mask)
+    tl.store(py_ptr + offs_m, py, mask=mask_m)
+    tl.store(y_ptr + offs_m, y, mask=mask_m)
 
 
 def poincare_fc_project_fwd_triton(
@@ -242,24 +250,27 @@ def poincare_fc_project_fwd_triton(
     mn = torch.where(yn > max_norm, max_norm, yn)
 
     # allocate space for result
-    y_proj = torch.empty_like(num)
+    y = torch.empty_like(num)
+    py = torch.empty_like(num)
 
     grid = lambda meta: (B, triton.cdiv(M, meta["BLOCK_M"]))
     _project_where_kernel[grid](
+        y,
         num,
         den,
         yn,
         mn,
-        y_proj,
-        num.shape[0],
-        num.shape[1],
+        py,
+        y.stride(0),
         num.stride(0),
-        y_proj.stride(0),
+        py.stride(0),
+        B,
+        M,
     )
 
     if return_cache:
-        return y_proj, (x, z, xz, zn, b, lam, num, den, yn, max_norm, c, cs)
-    return y_proj
+        return py, (y, x, z, xz, zn, b, lam, num, den, yn, max_norm, c_val, cs)
+    return py
 
 
 def poincare_fc_fwd_project_ref(
@@ -304,12 +315,13 @@ def poincare_fc_fwd_project_ref(
     max_norm = (1 - eps) / ((c + 1e-15) ** 0.5)
     max_norm_tensor = torch.where(c.gt(0), max_norm, c.new_full((), 1e15))
 
-    norm = y.norm(dim=dim, keepdim=True, p=2).clamp_min(1e-15)
-    mn = torch.where(norm > max_norm_tensor, max_norm_tensor, norm)
-    yp = y / norm * mn
+    yn = y.norm(dim=dim, keepdim=True, p=2).clamp_min(1e-15)
+    mn = torch.where(yn > max_norm_tensor, max_norm_tensor, yn)
+    py = y / yn * mn
 
     if return_cache:
-        return yp, (
+        return py, (
+            y,
             x,
             z,
             xz,
@@ -318,10 +330,10 @@ def poincare_fc_fwd_project_ref(
             lam.squeeze(),
             num,
             den.squeeze(),
-            norm,
+            yn,
             max_norm.item(),
-            c,
+            c.item(),
             cs.item(),
         )
 
-    return yp
+    return py
