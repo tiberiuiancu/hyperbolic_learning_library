@@ -29,8 +29,9 @@ def assert_allclose(x, y, message: str = ""):
     elif not isinstance(x, torch.Tensor):
         assert x == y, message
     else:
+        assert x.shape == y.shape, f"{message} shape mismatch: {x.shape}, {y.shape}"
         assert torch.allclose(
-            x, y, rtol=RTOL, atol=ATOL
+            x, y, atol=ATOL
         ), f"{message} | max diff: {(x - y).abs().max().item()}"
 
 

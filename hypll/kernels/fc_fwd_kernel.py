@@ -131,7 +131,8 @@ def _poincare_fc_fwd_kernel(
     den = 1.0 + tl.sqrt(1.0 + c * den_acc)
 
     # calculate the euclidean norm of the output
-    y_norm = tl.sqrt(den_acc / den)
+    deni = 1 / den
+    y_norm = tl.sqrt(den_acc * deni * deni)
     y_norm = tl.clamp(y_norm, 1e-15, 1e15)
 
     # write denominator
@@ -149,12 +150,12 @@ def _poincare_fc_fwd_kernel(
     key=["B", "M"],
 )
 @triton.jit
-def _project_where_kernel(
+def _project_kernel(
     y_ptr,
     num_ptr,
     den_ptr,
     yn_ptr,
-    max_norm_ptr,
+    max_norm,
     py_ptr,
     stride_y_b: tl.constexpr,
     stride_num_b: tl.constexpr,
@@ -176,10 +177,12 @@ def _project_where_kernel(
     num = tl.load(num_ptr + offs_m, mask=mask_m, other=0.0)
     den = tl.load(den_ptr + pid_b)
     yn = tl.load(yn_ptr + pid_b)
-    max_norm = tl.load(max_norm_ptr + pid_b)
 
     y = num / den
-    py = y * max_norm / yn
+    if yn < max_norm:
+        py = y
+    else:
+        py = y / yn * max_norm
 
     tl.store(py_ptr + offs_m, py, mask=mask_m)
     tl.store(y_ptr + offs_m, y, mask=mask_m)
@@ -247,19 +250,17 @@ def poincare_fc_project_fwd_triton(
     if c_val > 0:
         max_norm = (1 - eps) / ((c_val + 1e-15) ** 0.5)
 
-    mn = torch.where(yn > max_norm, max_norm, yn)
-
     # allocate space for result
     y = torch.empty_like(num)
     py = torch.empty_like(num)
 
     grid = lambda meta: (B, triton.cdiv(M, meta["BLOCK_M"]))
-    _project_where_kernel[grid](
+    _project_kernel[grid](
         y,
         num,
         den,
         yn,
-        mn,
+        max_norm,
         py,
         y.stride(0),
         num.stride(0),
@@ -330,7 +331,7 @@ def poincare_fc_fwd_project_ref(
             lam.squeeze(),
             num,
             den.squeeze(),
-            yn,
+            yn.squeeze(),
             max_norm.item(),
             c.item(),
             cs.item(),
