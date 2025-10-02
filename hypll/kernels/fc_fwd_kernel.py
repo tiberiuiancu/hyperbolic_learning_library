@@ -62,8 +62,9 @@ def single_block_fwd(
     ed = tl.exp(D)
     edi = 1 / ed
     ed_dif = ed - edi
+    ed_sum = ed + edi
     num = 0.5 * ed_dif / cs
-    return sq_p2_1, log_p_sq, eb_sum, eb_dif, ed_dif, num
+    return sq_p2_1, log_p_sq, eb_sum, eb_dif, ed_sum, num
 
 
 @triton.autotune(

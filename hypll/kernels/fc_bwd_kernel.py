@@ -8,10 +8,10 @@ from hypll.kernels.fc_fwd_kernel import single_block_fwd
 def get_autotune_configs():
     return [
         triton.Config({"BLOCK_M": 16}),
-        triton.Config({"BLOCK_M": 32}),
-        triton.Config({"BLOCK_M": 64}),
-        triton.Config({"BLOCK_M": 128}),
-        triton.Config({"BLOCK_M": 256}),
+        # triton.Config({"BLOCK_M": 32}),
+        # triton.Config({"BLOCK_M": 64}),
+        # triton.Config({"BLOCK_M": 128}),
+        # triton.Config({"BLOCK_M": 256}),
     ]
 
 
@@ -70,7 +70,7 @@ def _poincare_fc_bwd_kernel(
     zn = tl.load(zn_ptr + offs_m, mask=mask_m, other=1.0)
     b = tl.load(b_ptr + offs_m, mask=mask_m, other=0.0)
 
-    sq_p2_1, log_p_sq, eb_sum, eb_dif, ed_dif, num = single_block_fwd(b, lam, zn, XZ, cs)
+    sq_p2_1, log_p_sq, eb_sum, eb_dif, ed_sum, num = single_block_fwd(b, lam, zn, XZ, cs)
 
     # calculate outputs for dx
     deni = 1 / den
@@ -81,7 +81,7 @@ def _poincare_fc_bwd_kernel(
     T2 = deni * (T1 - c * num * deni_1 * T1_num)
 
     # T3
-    ed_div = ed_dif / (2 * cs)
+    ed_div = ed_sum / (2 * cs)
     T3 = T2 * ed_div * zn / sq_p2_1
 
     # T4: multiply by lambda after summation to save compute
