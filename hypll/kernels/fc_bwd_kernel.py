@@ -18,6 +18,7 @@ def get_autotune_configs():
 @triton.autotune(
     configs=get_autotune_configs(),
     key=["B", "M"],
+    reset_to_zero=["T4_sum_ptr", "T7_sum_ptr", "dr_ptr"],
 )
 @triton.jit
 def _poincare_fc_bwd_kernel(
@@ -35,7 +36,7 @@ def _poincare_fc_bwd_kernel(
     T5_ptr,
     T8_ptr,
     T7_sum_ptr,
-    T4_norm_ptr,
+    T4_sum_ptr,
     dr_ptr,
     ##### strides
     T1_stride_b: tl.constexpr,
@@ -86,14 +87,14 @@ def _poincare_fc_bwd_kernel(
 
     # T4: multiply by lambda after summation to save compute
     eb_div = eb_sum * zni
-    T4_tmp = T3 * (cs * XZ * eb_div - eb_dif)
-    T4_norm = tl.sum(T4_tmp) * lam * lam * c
+    T4 = T3 * (cs * XZ * eb_div - eb_dif)
+    T4_norm = tl.sum(T4 * mask_m.to(tl.float32)) * lam * lam * c
 
     # T5
     T5 = cs * lam * T3 * eb_div
 
     # write outputs for dx
-    tl.atomic_add(T4_norm_ptr + pid_b, T4_norm)
+    tl.atomic_add(T4_sum_ptr + pid_b, T4_norm)
     tl.store(T5_ptr + offs_m, T5, mask=mask_m)
 
     # calculate outputs for dz
@@ -111,10 +112,7 @@ def _poincare_fc_bwd_kernel(
     tl.atomic_add(dr_ptr + offs_m, T9, mask=mask_m)
 
 
-@triton.autotune(
-    configs=get_autotune_configs(),
-    key=["B", "M"],
-)
+@triton.autotune(configs=get_autotune_configs(), key=["B", "M"], reset_to_zero=["T1_num_ptr"])
 @triton.jit
 def _dL_dY_kernel(
     # inputs
