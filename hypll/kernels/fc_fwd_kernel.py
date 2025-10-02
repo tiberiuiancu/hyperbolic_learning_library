@@ -221,8 +221,9 @@ def poincare_fc_project_fwd_triton(
 
     # Prepare bias
     if r is None:
-        r = torch.zeros((M,)).cuda()  # dummy
-    b = 2 * cs * r
+        b = torch.zeros((M,), device="cuda")
+    else:
+        b = 2 * cs * r
 
     # Launch Triton kernel, passing pointers to all outputs
     grid = (B,)

@@ -8,10 +8,10 @@ from hypll.kernels.fc_fwd_kernel import single_block_fwd
 def get_autotune_configs():
     return [
         triton.Config({"BLOCK_M": 16}),
-        # triton.Config({"BLOCK_M": 32}),
-        # triton.Config({"BLOCK_M": 64}),
-        # triton.Config({"BLOCK_M": 128}),
-        # triton.Config({"BLOCK_M": 256}),
+        triton.Config({"BLOCK_M": 32}),
+        triton.Config({"BLOCK_M": 64}),
+        triton.Config({"BLOCK_M": 128}),
+        triton.Config({"BLOCK_M": 256}),
     ]
 
 
@@ -34,7 +34,7 @@ def _poincare_fc_bwd_kernel(
     ##### outputs
     T5_ptr,
     T8_ptr,
-    T79_sum_ptr,
+    T7_sum_ptr,
     T4_norm_ptr,
     dr_ptr,
     ##### strides
@@ -98,20 +98,17 @@ def _poincare_fc_bwd_kernel(
 
     # calculate outputs for dz
     T6 = T1 * deni * (1 - c * num * num * deni_1) * ed_div
-    T7 = T6 * zni * log_p_sq
-    _tmp1 = T6 / sq_p2_1
-    _tmp2 = _tmp1 * eb_sum * cs * lam * 0.5
-    T8 = _tmp2 * zn * zn
-    T9 = _tmp2 * XZ
+    _tmp = eb_sum * cs * lam / sq_p2_1
+    T7 = T6 * zni * (2 * log_p_sq - _tmp * XZ * zni)
+    T8 = T6 * _tmp
 
     # write output for dz
     tl.store(T8_ptr + offs_m, T8, mask=mask_m)
-    tl.atomic_add(T79_sum_ptr + offs_m, T7 + T9, mask=mask_m)
+    tl.atomic_add(T7_sum_ptr + offs_m, T7, mask=mask_m)
 
     # calculate outputs for dr
-    T10 = _tmp1 * zn
-    dr_tmp = 2 * cs * ((c * eb_dif * zni + eb_sum) * lam - eb_sum) * T10
-    tl.atomic_add(dr_ptr + offs_m, dr_tmp, mask=mask_m)
+    T9 = T6 * cs * zni / sq_p2_1 * (eb_dif * c * lam * zni - eb_sum * (lam - 1))
+    tl.atomic_add(dr_ptr + offs_m, T9, mask=mask_m)
 
 
 @triton.autotune(
@@ -203,9 +200,9 @@ def poincare_fc_bwd_triton(dout, Y, X, Z, XZ, zn, b, lam, num, den, yn, max_norm
     dZ = torch.empty_like(Z)
     dr = torch.zeros_like(b)
 
-    T4_norm = torch.zeros_like(lam)
+    T4_sum = torch.zeros_like(lam)
     T5 = torch.empty_like(XZ)
-    T79_norm = torch.zeros_like(b)
+    T7_sum = torch.zeros_like(b)
     T8 = torch.empty_like(T5)
 
     _poincare_fc_bwd_kernel[grid](
@@ -220,8 +217,8 @@ def poincare_fc_bwd_triton(dout, Y, X, Z, XZ, zn, b, lam, num, den, yn, max_norm
         cs,
         T5,
         T8,
-        T79_norm,
-        T4_norm,
+        T7_sum,
+        T4_sum,
         dr,
         T1.stride(0),
         XZ.stride(0),
@@ -232,7 +229,7 @@ def poincare_fc_bwd_triton(dout, Y, X, Z, XZ, zn, b, lam, num, den, yn, max_norm
     )
 
     # perform the matrix multiply and addition in one kernel call
-    dX = torch.addmm(X * T4_norm[:, None], T5, Z.T)
-    dZ = torch.addmm(Z * T79_norm[None, :], X.T, T8)
+    dX = torch.addmm(X * T4_sum[:, None], T5, Z.T)
+    dZ = torch.addmm(Z * T7_sum[None, :], X.T, T8)
 
     return dX, dZ, dr

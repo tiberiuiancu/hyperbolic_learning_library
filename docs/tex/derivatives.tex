@@ -152,20 +152,17 @@ With $\v{D}{bm}=2\,\v{zn}{m}\,\log\!\big(\v{P}{bm}+\sqrt{\v{P}{bm}^2+1}\big)$:
 = \tfrac12(\ev{b}{m}+\ev{-b}{m})\,\sqrt{c}\,\lam_b\,
 \Big(\v{X}{bk}\,\v{zn}{m}^{-1} - \v{XZ}{bm}\,\v{Z}{km}\,\v{zn}{m}^{-3}\Big).
 \end{align}
-Collecting and cancelling the factor $2$ with $1/(2\sqrt{c})$ inside $\T{6}{bm}$, define
+Collecting:
 \begin{align}
-\T{7}{bm} &:= \frac{\T{6}{bm}}{\v{zn}{m}}\,\log\!\big(\v{P}{bm}+\sqrt{\v{P}{bm}^2+1}\big),\\
-\T{8}{bm} &:= \T{6}{bm}\,\frac{\v{zn}{m}}{\sqrt{\v{P}{bm}^2+1}}
-\cdot (\ev{b}{m}+\ev{-b}{m})\,\sqrt{c}\,\lam_b\,\tfrac{1}{2}\cdot \v{zn}{m},\\
-\T{9}{bm} &:= \T{6}{bm}\,\frac{1}{\sqrt{\v{P}{bm}^2+1}}
-\cdot (\ev{b}{m}+\ev{-b}{m})\,\sqrt{c}\,\lam_b\,\tfrac{1}{2}\cdot \v{XZ}{bm}.
+\ddfrac{\mathcal{L}}{\v{Z}{km}} =& \sum_b \Bigg[\v{Z}{km}\,\underbrace{\T{6}{bm}\,\v{zn}{m}^{-1}\left( 2\,\log\left(\v{P}{bm} + \sqrt{\v{P}{bm}^2 + 1}\right) - \frac{(\ev{b} + \ev{-b})\,\sqrt{c}\,\lam_b\,\v{XZ}{bm}\,\v{zn}{m}^{-1}}{\sqrt{\v{P}{bm}^2 + 1}}\right)}_{:=\T{7}{bm}} + \\
+& + \v{X}{bk}\,\underbrace{\T{6}{bm}\,\frac{(\ev{b} + \ev{-b})\,\sqrt{c}\,\lam_b}{\sqrt{\v{P}{bm}^2 + 1}}}_{:=\T{8}{bm}}\Bigg] \\
 \end{align}
 Then
 \[
 \ddfrac{\mathcal{L}}{\v{Z}{km}}
-= \sum_b \Big[(\T{7}{bm}+\T{9}{bm})\,\v{Z}{km} + \T{8}{bm}\,\v{X}{bk}\Big],
+= \sum_b \Big[\T{7}{bm}\,\v{Z}{km} + \T{8}{bm}\,\v{X}{bk}\Big],
 \quad
-\boxed{\ \ddfrac{\mathcal{L}}{\v{Z}} = \v{Z}\,\odot\,\colnorm{\T{7}+\T{9}}\ +\ \v{X}^\top \T{8}\ }\in\mathbb{R}^{K\times M}.
+\boxed{\ \ddfrac{\mathcal{L}}{\v{Z}} = \v{Z}\,\odot\,\colnorm{\T{7}}\ +\ \v{X}^\top \T{8}\ }\in\mathbb{R}^{K\times M}.
 \]
 
 % ---------- Backward w.r.t. r ----------
@@ -184,24 +181,15 @@ and
 = \sqrt{c}\Big[\tfrac12(\ev{b}{m}-\ev{-b}{m})\,\frac{c\,\lam_b}{\v{zn}{m}}
 + \tfrac12(\ev{b}{m}+\ev{-b}{m})\,(\lam_b-1)\Big],
 \end{align}
-since $\v{b}=2\sqrt{c}\,\v{r}$. Define
-\[
-\T{10}{bm}:=\frac{\T{6}{bm}\,\v{zn}{m}}{\sqrt{\v{P}{bm}^2+1}},
-\]
-then
+since $\v{b}=2\sqrt{c}\,\v{r}$. 
+Then
 \[
 \ddfrac{\mathcal{L}}{\v{r}{m}}
-= 2\sqrt{c}\left(
-\left[\frac{c}{\v{zn}{m}}(\ev{b}{m}-\ev{-b}{m}) + (\ev{b}{m}+\ev{-b}{m})\right]\sum_b \T{10}{bm}\lam_b
-- (\ev{b}{m}+\ev{-b}{m})\sum_b \T{10}{bm}
-\right)
+= \sum_b \underbrace{\T{6}{bm}\,\frac{\sqrt{c}\,\v{zn}{m}}{\sqrt{\v{P}{bm}^2+1}} \Big[(\ev{b}{m}-\ev{-b}{m})\,\frac{c\,\lam_b}{\v{zn}{m}}
++ (\ev{b}{m}+\ev{-b}{m})\,(\lam_b-1)\Big]}_{:=\T{9}{bm}}
 \]
 \[
-\boxed{\ \ddfrac{\mathcal{L}}{\v{r}} =
-2\sqrt{c}\left(
-\Big[c\,\tfrac{\ev{b}-\ev{-b}}{\v{zn}}+\ev{b}+\ev{-b}\Big]\odot \colnorm{\T{10}\odot\v{\lam}}
-\ -\ (\ev{b}+\ev{-b})\odot \colnorm{\T{10}}
-\right)\ }\in\mathbb{R}^{M}.
+\boxed{\ \ddfrac{\mathcal{L}}{\v{r}} = \sum_b \T{9}{b}}
 \]
 
 \end{document}

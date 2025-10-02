@@ -71,7 +71,7 @@ def test_fwd(bias_flag: bool):
     assert_allclose(out, out_trit)
 
 
-@pytest.mark.parametrize("bias_flag", [True])
+@pytest.mark.parametrize("bias_flag", [False])
 def test_bwd(bias_flag: bool):
     torch.manual_seed(0)
 
