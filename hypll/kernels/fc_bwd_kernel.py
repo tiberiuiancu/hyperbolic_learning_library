@@ -1,8 +1,10 @@
+from typing import Literal
 import torch
 import triton
 import triton.language as tl
 
 from hypll.kernels.fc_fwd_kernel import single_block_fwd
+from hypll.kernels.gemm import addmm
 
 
 def get_autotune_configs():
@@ -126,13 +128,13 @@ def _dL_dY_kernel(
     T1_ptr,
     T1_num_ptr,
     # strides
-    dout_stride_b: tl.constexpr,
-    Y_stride_b: tl.constexpr,
-    num_stride_b: tl.constexpr,
-    T1_stride_b: tl.constexpr,
+    dout_stride_b,
+    Y_stride_b,
+    num_stride_b,
+    T1_stride_b,
     # constants
-    B: tl.constexpr,
-    M: tl.constexpr,
+    B,
+    M,
     BLOCK_M: tl.constexpr,
 ):
     pid_b = tl.program_id(0)
@@ -162,7 +164,23 @@ def _dL_dY_kernel(
     tl.store(T1_ptr + offs_m, T1, mask=mask_m)
 
 
-def poincare_fc_bwd_triton(dout, Y, X, Z, XZ, zn, b, lam, num, den, yn, max_norm, c, cs):
+def poincare_fc_bwd_triton(
+    dout,
+    Y,
+    X,
+    Z,
+    XZ,
+    zn,
+    b,
+    lam,
+    num,
+    den,
+    yn,
+    max_norm,
+    c,
+    cs,
+    matmul_provider: Literal["torch", "triton", "triton_transp"] = "torch",
+):
     # TODO: sanity checks
     B, K = X.shape
     K2, M = Z.shape
@@ -172,11 +190,35 @@ def poincare_fc_bwd_triton(dout, Y, X, Z, XZ, zn, b, lam, num, den, yn, max_norm
     c = c if isinstance(c, float) else c.item()
     cs = cs if isinstance(cs, float) else cs.item()
 
-    # get dL_dY
+    # preallocate GPU buffers
     T1 = torch.empty_like(XZ)
-    T1_num = torch.zeros_like(lam)
+    T1_num = torch.empty_like(lam)
+    dX = torch.empty_like(X)
+    dZ = torch.empty_like(Z)
+    dr = torch.empty_like(b)
+    T4_sum = torch.empty_like(lam)
+    T5 = torch.empty_like(XZ)
+    T7_sum = torch.empty_like(b)
+    T8 = torch.empty_like(T5)
+
+    # zero out T1_num, dr, T4_sum, T7_sum
+    zeros_M = torch.zeros_like(b, device="cpu")
+    zeros_B = torch.zeros_like(lam, device="cpu")
+
+    transfer_stream_1 = torch.cuda.Stream()
+    with torch.cuda.stream(transfer_stream_1):
+        T1_num.copy_(zeros_B, non_blocking=True)
+
+    transfer_stream_2 = torch.cuda.Stream()
+    with torch.cuda.stream(transfer_stream_2):
+        T4_sum.copy_(zeros_B, non_blocking=True)
+        T7_sum.copy_(zeros_M, non_blocking=True)
+        dr.copy_(zeros_M, non_blocking=True)
+
+    # get dL_dY
     dout_y_sum = torch.einsum("ij,ij->i", dout, Y)
     grid = lambda meta: (B, triton.cdiv(M, meta["BLOCK_M"]))
+    torch.cuda.current_stream().wait_stream(transfer_stream_1)
     _dL_dY_kernel[grid](
         dout,
         Y,
@@ -194,15 +236,7 @@ def poincare_fc_bwd_triton(dout, Y, X, Z, XZ, zn, b, lam, num, den, yn, max_norm
         M,
     )
 
-    dX = torch.empty_like(X)
-    dZ = torch.empty_like(Z)
-    dr = torch.zeros_like(b)
-
-    T4_sum = torch.zeros_like(lam)
-    T5 = torch.empty_like(XZ)
-    T7_sum = torch.zeros_like(b)
-    T8 = torch.empty_like(T5)
-
+    torch.cuda.current_stream().wait_stream(transfer_stream_2)
     _poincare_fc_bwd_kernel[grid](
         T1,
         T1_num,
@@ -227,7 +261,13 @@ def poincare_fc_bwd_triton(dout, Y, X, Z, XZ, zn, b, lam, num, den, yn, max_norm
     )
 
     # perform the matrix multiply and addition in one kernel call
-    dX = torch.addmm(X * T4_sum[:, None], T5, Z.T)
-    dZ = torch.addmm(Z * T7_sum[None, :], X.T, T8)
-
+    if matmul_provider == "torch":
+        dX = torch.addmm(X * T4_sum[:, None], T5, Z.T)
+        dZ = torch.addmm(Z * T7_sum[None, :], X.T, T8)
+    elif matmul_provider == "triton":
+        dX = addmm(T4_sum.view(-1, 1), X, T5, Z.t().contiguous())
+        dZ = addmm(T7_sum.view(1, -1), Z, X.t().contiguous(), T8)
+    else:
+        dX = addmm(T4_sum.view(-1, 1), X, T5, Z, b_transp=True)
+        dZ = addmm(T7_sum.view(1, -1), Z, X, T8, a_transp=True)
     return dX, dZ, dr

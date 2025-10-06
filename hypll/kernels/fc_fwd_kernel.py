@@ -83,11 +83,11 @@ def _poincare_fc_fwd_kernel(
     lam_ptr,  # [B]   fp32 – cache for lambda
     c,  # fp32  (curvature)
     cs,  # fp32  (sqrt(curvature))
-    K: tl.constexpr,
-    M: tl.constexpr,
-    stride_x_b: tl.constexpr,
-    stride_xz_b: tl.constexpr,
-    stride_num_b: tl.constexpr,
+    K,
+    M,
+    stride_x_b,
+    stride_xz_b,
+    stride_num_b,
     BLOCK_K: tl.constexpr,
     BLOCK_M: tl.constexpr,
 ):
@@ -158,11 +158,11 @@ def _project_kernel(
     yn_ptr,
     max_norm,
     py_ptr,
-    stride_y_b: tl.constexpr,
-    stride_num_b: tl.constexpr,
-    stride_py_b: tl.constexpr,
-    B: tl.constexpr,
-    M: tl.constexpr,
+    stride_y_b,
+    stride_num_b,
+    stride_py_b,
+    B,
+    M,
     BLOCK_M: tl.constexpr,
 ):
     pid_b = tl.program_id(0)
