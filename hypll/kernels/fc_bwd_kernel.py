@@ -9,11 +9,15 @@ from hypll.kernels.gemm import addmm
 
 def get_autotune_configs():
     return [
+        triton.Config({"BLOCK_M": 4}),
+        triton.Config({"BLOCK_M": 8}),
         triton.Config({"BLOCK_M": 16}),
         triton.Config({"BLOCK_M": 32}),
         triton.Config({"BLOCK_M": 64}),
         triton.Config({"BLOCK_M": 128}),
         triton.Config({"BLOCK_M": 256}),
+        triton.Config({"BLOCK_M": 512}),
+        triton.Config({"BLOCK_M": 1024}),
     ]
 
 
@@ -179,7 +183,7 @@ def poincare_fc_bwd_triton(
     max_norm,
     c,
     cs,
-    matmul_provider: Literal["torch", "triton", "triton_transp"] = "torch",
+    backend: Literal["triton", "triton-own", "triton-own-transp"] = "triton",
 ):
     # TODO: sanity checks
     B, K = X.shape
@@ -261,13 +265,14 @@ def poincare_fc_bwd_triton(
     )
 
     # perform the matrix multiply and addition in one kernel call
-    if matmul_provider == "torch":
+    if backend == "triton":
         dX = torch.addmm(X * T4_sum[:, None], T5, Z.T)
         dZ = torch.addmm(Z * T7_sum[None, :], X.T, T8)
-    elif matmul_provider == "triton":
-        dX = addmm(T4_sum.view(-1, 1), X, T5, Z.t().contiguous())
+    elif backend == "triton-own":
+        dX = torch.addmm(X * T4_sum[:, None], T5, Z.T)
+        # dX = addmm(T4_sum.view(-1, 1), X, T5, Z.t().contiguous())
         dZ = addmm(T7_sum.view(1, -1), Z, X.t().contiguous(), T8)
-    else:
-        dX = addmm(T4_sum.view(-1, 1), X, T5, Z, b_transp=True)
+    elif backend == "triton-own-transp":
+        dX = torch.addmm(X * T4_sum[:, None], T5, Z.T)
         dZ = addmm(T7_sum.view(1, -1), Z, X, T8, a_transp=True)
     return dX, dZ, dr
