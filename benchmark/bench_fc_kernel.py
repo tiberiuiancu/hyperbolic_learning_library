@@ -9,35 +9,32 @@ import hypll.nn as hnn
 from hypll.tensors.tangent_tensor import TangentTensor
 
 # configs for B, M, K
-configs = [
-    # Small
-    [8, 256, 256],
-    [16, 512, 512],
-    [32, 512, 512],
-    # Medium
-    [64, 1024, 1024],
-    [128, 1024, 2048],
-    [128, 2048, 1024],
-    [256, 2048, 2048],
-    # Large
-    [512, 4096, 2048],
-    [512, 2048, 4096],
-    [1024, 4096, 4096],
-    [1024, 8192, 4096],
-]
+default_b, default_m, default_k = 128, 3096, 3096
+b_sweep = [2**i for i in range(12)]
+m_sweep = [2**i for i in range(7, 15)]
+k_sweep = [2**i for i in range(7, 15)]
 
-configs = [
-    # --- Small models (edge devices, simple MLPs, tabular data) ---
-    [32, 128, 256],
-    [64, 256, 512],
-    [128, 512, 1024],
-    # --- Medium models (typical academic or production MLPs/transformers) ---
-    [256, 1024, 2048],
-    [512, 2048, 4096],
-    [512, 4096, 8192],
-    [1024, 4096, 16384],
-    [2048, 8192, 16384],
-]
+
+def get_bench_kwargs():
+    return dict(
+        line_arg="provider",
+        line_vals=["triton", "torch", "compile", "euclidean"],
+        line_names=[
+            "Triton",
+            "PyTorch",
+            "Compiled PyTorch",
+            "Euclidean",
+        ],
+        styles=[
+            ("red", "-"),
+            ("blue", "--"),
+            ("green", "-."),
+            ("orange", ":"),
+        ],
+        ylabel="Execution Time (ms)",
+        args={"c": 0.1},
+        x_log=True,
+    )
 
 
 def build_layer(M, K, c, dtype, device, config, compiled: bool = False):
@@ -54,39 +51,11 @@ def build_layer(M, K, c, dtype, device, config, compiled: bool = False):
     return layer, manifold
 
 
-@triton.testing.perf_report(
-    triton.testing.Benchmark(
-        x_names=["cfg_id"],
-        x_vals=list(range(len(configs))),
-        line_arg="provider",
-        line_vals=["triton", "triton-own", "triton-own-transp", "torch", "compile", "euclidean"],
-        line_names=[
-            "Triton",
-            "Triton own gemm",
-            "Triton own gemm transp",
-            "PyTorch",
-            "Compiled PyTorch",
-            "Euclidean",
-        ],
-        styles=[
-            ("red", "-"),
-            ("red", "--"),
-            ("red", "-."),
-            ("blue", "--"),
-            ("green", "-."),
-            ("orange", ":"),
-        ],
-        ylabel="Execution Time (ms)",
-        plot_name="poincare_fc-performance",
-        args={"c": 0.1},
-    )
-)
-def bench(cfg_id, provider: str, c: float):
+def bench(B, M, K, c, provider):
     device = "cuda"
     dtype = torch.float32
     torch.manual_seed(0)
 
-    B, M, K = configs[cfg_id]
     compiled = False
     if provider == "compile":
         provider = "torch"
@@ -108,7 +77,48 @@ def bench(cfg_id, provider: str, c: float):
     return ms
 
 
+@triton.testing.perf_report(
+    triton.testing.Benchmark(
+        x_names=["batch_size"],
+        x_vals=b_sweep,
+        plot_name=f"poincare_fc_performance_b",
+        **get_bench_kwargs(),
+    )
+)
+def bench_b(batch_size, provider: str, c: float):
+    return bench(batch_size, default_m, default_k, c, provider)
+
+
+@triton.testing.perf_report(
+    triton.testing.Benchmark(
+        x_names=["input_size"],
+        x_vals=m_sweep,
+        plot_name=f"poincare_fc_performance_m",
+        **get_bench_kwargs(),
+    )
+)
+def bench_m(input_size, provider: str, c: float):
+    return bench(default_b, input_size, default_k, c, provider)
+
+
+@triton.testing.perf_report(
+    triton.testing.Benchmark(
+        x_names=["hidden_size"],
+        x_vals=k_sweep,
+        plot_name=f"poincare_fc_performance_k",
+        **get_bench_kwargs(),
+    )
+)
+def bench_k(hidden_size, provider: str, c: float):
+    return bench(default_b, default_m, hidden_size, c, provider)
+
+
 if __name__ == "__main__":
     # Run benchmarks and save plots
     os.makedirs("plots", exist_ok=True)
-    bench.run(show_plots=False, print_data=True, save_path="./plots/poincare_fc_performance")
+    run_kwargs = dict(
+        show_plots=False, print_data=True, save_path="./plots/poincare_fc_performance"
+    )
+    bench_b.run(**run_kwargs)
+    bench_m.run(**run_kwargs)
+    bench_k.run(**run_kwargs)
