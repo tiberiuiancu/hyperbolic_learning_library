@@ -163,10 +163,10 @@ class ProfileArgs(Tap):
     hyperbolic: bool = False
     compile_model: bool = False
     compile_optimizer: bool = False
-    batch_size: int = 64
-    mlp_hdims: list[int] = [2**10]
+    batch_size: int = 128
+    mlp_hdims: list[int] = [2**12]
     curvature: float = 0.1
-    triton: bool = False
+    backend: str = "torch"
     active: int = 1
     warmup: int = 1
     wait: int = 1
@@ -175,9 +175,9 @@ class ProfileArgs(Tap):
         self.add_argument("model")
         self.add_argument("--dataset", "-d")
         self.add_argument("--hyperbolic", "-H", action="store_true")
-        self.add_argument("--triton", "-t", action="store_true")
+        self.add_argument("--backend")
         self.add_argument("--compile_model", "-c", action="store_true")
-        self.add_argument("--batch_size", "-bs")
+        self.add_argument("--batch_size", "-b")
         self.add_argument("-a", "--active")
         self.add_argument("-w", "--warmup")
 
@@ -198,9 +198,7 @@ if __name__ == "__main__":
 
     # create manifold
     manifold = (
-        PoincareBall(c=Curvature(args.curvature), use_triton_backend=args.triton)
-        if args.hyperbolic
-        else None
+        PoincareBall(c=Curvature(args.curvature), backend=args.backend) if args.hyperbolic else None
     )
 
     net = get_model(args, in_size, out_size, manifold)
@@ -211,7 +209,7 @@ if __name__ == "__main__":
         ("h_" if args.hyperbolic else "")
         + ("c_" if args.compile_model else "")
         + ("co_" if args.compile_optimizer else "")
-        + ("trit_" if args.triton else "")
+        + (f"{args.backend}_" if args.hyperbolic else "")
         + f"{args.model}"
     )
     profile_training(

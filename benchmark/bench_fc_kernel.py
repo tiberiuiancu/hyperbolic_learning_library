@@ -11,7 +11,6 @@ from hypll.tensors.tangent_tensor import TangentTensor
 # configs for B, M, K
 configs = [
     # Small
-    [4, 128, 128],
     [8, 256, 256],
     [16, 512, 512],
     [32, 512, 512],
@@ -25,45 +24,59 @@ configs = [
     [512, 2048, 4096],
     [1024, 4096, 4096],
     [1024, 8192, 4096],
-    # Extra large (stress test)
-    [2048, 8192, 8192],
-    [4096, 8192, 4096],
-    [4096, 16384, 8192],
+]
+
+configs = [
+    # --- Small models (edge devices, simple MLPs, tabular data) ---
+    [32, 128, 256],
+    [64, 256, 512],
+    [128, 512, 1024],
+    # --- Medium models (typical academic or production MLPs/transformers) ---
+    [256, 1024, 2048],
+    [512, 2048, 4096],
+    [512, 4096, 8192],
+    [1024, 4096, 16384],
+    [2048, 8192, 16384],
 ]
 
 
-def build_layers(M, K, c, dtype, device):
-    manifold_triton = PoincareBall(Curvature(c), use_triton_backend=True)
-    manifold_default = PoincareBall(Curvature(c), use_triton_backend=False)
+def build_layer(M, K, c, dtype, device, config, compiled: bool = False):
+    manifold = None
+    if config == "euclidean":
+        layer = torch.nn.Linear(M, K, bias=True, device=device, dtype=dtype)
+    else:
+        manifold = PoincareBall(Curvature(c), backend=config)
+        layer = hnn.HLinear(M, K, manifold=manifold).to(device=device, dtype=dtype)
 
-    # fast triton implentation
-    _get_hyperbolic_layer = lambda manifold: hnn.HLinear(M, K, manifold=manifold).to(
-        device=device, dtype=dtype
-    )
+    if compiled:
+        layer = torch.compile(layer)
 
-    triton_layer = _get_hyperbolic_layer(manifold_triton)
-
-    # torch implementation in hnn
-    torch_layer = _get_hyperbolic_layer(manifold_default)
-
-    # compiled hnn
-    compiled_layer = torch.compile(_get_hyperbolic_layer(manifold_default))
-
-    # euclidean nn.Linear
-    eu_layer = torch.nn.Linear(M, K, bias=True, device=device, dtype=dtype)
-
-    return triton_layer, torch_layer, compiled_layer, eu_layer, manifold_triton, manifold_default
+    return layer, manifold
 
 
 @triton.testing.perf_report(
     triton.testing.Benchmark(
         x_names=["cfg_id"],
-        x_vals=[i for i in range(8)],
+        x_vals=list(range(len(configs))),
         line_arg="provider",
-        line_vals=["triton", "torch", "compile", "euclidean"],
-        line_names=["Triton", "PyTorch", "Compiled PyTorch", "Euclidean"],
-        styles=[("red", "-"), ("blue", "--"), ("green", "-."), ("orange", ":")],
-        ylabel="TFLOPS",
+        line_vals=["triton", "triton-own", "triton-own-transp", "torch", "compile", "euclidean"],
+        line_names=[
+            "Triton",
+            "Triton own gemm",
+            "Triton own gemm transp",
+            "PyTorch",
+            "Compiled PyTorch",
+            "Euclidean",
+        ],
+        styles=[
+            ("red", "-"),
+            ("red", "--"),
+            ("red", "-."),
+            ("blue", "--"),
+            ("green", "-."),
+            ("orange", ":"),
+        ],
+        ylabel="Execution Time (ms)",
         plot_name="poincare_fc-performance",
         args={"c": 0.1},
     )
@@ -74,49 +87,24 @@ def bench(cfg_id, provider: str, c: float):
     torch.manual_seed(0)
 
     B, M, K = configs[cfg_id]
-    triton_layer, torch_layer, compiled_layer, eu_layer, manifold_triton, manifold_default = (
-        build_layers(M, K, c, dtype, device)
-    )
-
-    if provider == "triton":
-        layer = triton_layer
-        manifold = manifold_triton
-    elif provider == "torch":
-        layer = torch_layer
-        manifold = manifold_default
-    elif provider == "compile":
-        layer = compiled_layer
-        manifold = manifold_default
-    elif provider == "euclidean":
-        layer = eu_layer
-    else:
-        raise ValueError(f"Unknown provider: {provider}")
-
+    compiled = False
+    if provider == "compile":
+        provider = "torch"
+        compiled = True
+    layer, manifold = build_layer(M, K, c, torch.float32, "cuda", provider, compiled)
     layer.train()
 
-    # FLOPs: forward matmul ~2*B*M*K, backward wrt input another ~2*B*M*K,
-    # backward wrt weight another ~2*B*M*K. So ~6*B*M*K total.
-    # TODO: calculate FLOPS properly
-    flop = 6.0 * B * M * K
-
-    # Timed run: forward + backward
     def run():
         x = torch.randn(B, M, device=device, dtype=dtype, requires_grad=True)
         if provider != "euclidean":
             tangents = TangentTensor(data=x, manifold=manifold)
             x = manifold.expmap(tangents)
-
         y = layer(x)
-
         if provider != "euclidean":
             y = y.tensor
-
-        loss = y.sum()
-        loss.backward()
-        x.grad = None  # reset for next iteration
+        y.sum().backward()
 
     ms = triton.testing.do_bench(run)
-    # tflops = flop / ms / 1e9
     return ms
 
 
