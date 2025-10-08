@@ -5,7 +5,7 @@ import torch
 from torch import Tensor, empty, eye, no_grad
 from torch.nn import Parameter
 from torch.nn.common_types import _size_2_t
-from torch.nn.functional import softplus, unfold
+from torch.nn.functional import unfold
 from torch.nn.init import normal_, zeros_
 
 from hypll.kernels.fc_layer import FastPoincareFC
@@ -155,7 +155,10 @@ class PoincareBall(Manifold):
                 x=x.tensor, z=z.tensor, bias=bias, c=self.c(), dim=x.man_dim
             )
         new_tensor = ManifoldTensor(data=new_tensor, manifold=self, man_dim=x.man_dim)
-        return self.project(new_tensor)
+        if self.use_triton_backend:
+            return new_tensor
+        else:
+            return self.project(new_tensor)
 
     def frechet_mean(
         self,
