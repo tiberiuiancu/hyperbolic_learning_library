@@ -1,10 +1,8 @@
-from typing import Literal
 import torch
 import triton
 import triton.language as tl
 
 from hypll.kernels.fc_fwd_kernel import single_block_fwd
-from hypll.kernels.gemm import addmm
 
 
 def get_autotune_configs():
