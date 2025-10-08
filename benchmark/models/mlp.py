@@ -26,9 +26,11 @@ class MLP(nn.Module):
 
     def make_layer(self, in_dim: int, out_dim: int, manifold: Manifold | None):
         if manifold is None:
-            return nn.Linear(in_dim, out_dim)
+            return nn.Sequential(nn.Linear(in_dim, out_dim), nn.ReLU())
         else:
-            return hnn.HLinear(in_dim, out_dim, manifold=manifold)
+            return nn.Sequential(
+                hnn.HLinear(in_dim, out_dim, manifold=manifold), hnn.HReLU(manifold=manifold)
+            )
 
     def forward(self, x):
         return self.net(x)
