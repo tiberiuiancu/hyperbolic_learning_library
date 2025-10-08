@@ -45,13 +45,13 @@ def _poincare_fc_bwd_kernel(
     T4_sum_ptr,
     dr_ptr,
     ##### strides
-    T1_stride_b: tl.constexpr,
-    XZ_stride_b: tl.constexpr,
-    T5_stride_b: tl.constexpr,
-    T8_stride_b: tl.constexpr,
+    T1_stride_b,
+    XZ_stride_b,
+    T5_stride_b,
+    T8_stride_b,
     ##### dimensions
-    M: tl.constexpr,
-    B: tl.constexpr,
+    M,
+    B,
     BLOCK_M: tl.constexpr,
 ):
     # calculate which block we're working on
@@ -94,13 +94,13 @@ def _poincare_fc_bwd_kernel(
     # T4: multiply by lambda after summation to save compute
     eb_div = eb_sum * zni
     T4 = T3 * (cs * XZ * eb_div - eb_dif)
-    T4_norm = tl.sum(T4 * mask_m.to(tl.float32)) * lam * lam * c
+    T4_sum = tl.sum(T4 * mask_m.to(tl.float32)) * lam * lam * c
 
     # T5
     T5 = cs * lam * T3 * eb_div
 
     # write outputs for dx
-    tl.atomic_add(T4_sum_ptr + pid_b, T4_norm)
+    tl.atomic_add(T4_sum_ptr + pid_b, T4_sum)
     tl.store(T5_ptr + offs_m, T5, mask=mask_m)
 
     # calculate outputs for dz
@@ -183,7 +183,6 @@ def poincare_fc_bwd_triton(
     max_norm,
     c,
     cs,
-    backend: Literal["triton", "triton-own", "triton-own-transp"] = "triton",
 ):
     # TODO: sanity checks
     B, K = X.shape
@@ -220,7 +219,7 @@ def poincare_fc_bwd_triton(
         dr.copy_(zeros_M, non_blocking=True)
 
     # get dL_dY
-    dout_y_sum = torch.einsum("ij,ij->i", dout, Y)
+    dout_y_sum = (dout * Y).sum(1)
     grid = lambda meta: (B, triton.cdiv(M, meta["BLOCK_M"]))
     torch.cuda.current_stream().wait_stream(transfer_stream_1)
     _dL_dY_kernel[grid](
@@ -265,14 +264,6 @@ def poincare_fc_bwd_triton(
     )
 
     # perform the matrix multiply and addition in one kernel call
-    if backend == "triton":
-        dX = torch.addmm(X * T4_sum[:, None], T5, Z.T)
-        dZ = torch.addmm(Z * T7_sum[None, :], X.T, T8)
-    elif backend == "triton-own":
-        dX = torch.addmm(X * T4_sum[:, None], T5, Z.T)
-        # dX = addmm(T4_sum.view(-1, 1), X, T5, Z.t().contiguous())
-        dZ = addmm(T7_sum.view(1, -1), Z, X.t().contiguous(), T8)
-    elif backend == "triton-own-transp":
-        dX = torch.addmm(X * T4_sum[:, None], T5, Z.T)
-        dZ = addmm(T7_sum.view(1, -1), Z, X, T8, a_transp=True)
+    dX = torch.addmm(X * T4_sum[:, None], T5, Z.T)
+    dZ = torch.addmm(Z * T7_sum[None, :], X.T, T8)
     return dX, dZ, dr

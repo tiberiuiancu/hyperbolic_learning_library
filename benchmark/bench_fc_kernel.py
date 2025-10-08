@@ -9,7 +9,7 @@ import hypll.nn as hnn
 from hypll.tensors.tangent_tensor import TangentTensor
 
 # configs for B, M, K
-default_b, default_m, default_k = 128, 3096, 3096
+default_b, default_m, default_k = 128, 2048, 2048
 b_sweep = [2**i for i in range(12)]
 m_sweep = [2**i for i in range(7, 15)]
 k_sweep = [2**i for i in range(7, 15)]
@@ -42,7 +42,7 @@ def build_layer(M, K, c, dtype, device, config, compiled: bool = False):
     if config == "euclidean":
         layer = torch.nn.Linear(M, K, bias=True, device=device, dtype=dtype)
     else:
-        manifold = PoincareBall(Curvature(c), backend=config)
+        manifold = PoincareBall(Curvature(c))
         layer = hnn.HLinear(M, K, manifold=manifold).to(device=device, dtype=dtype)
 
     if compiled:
