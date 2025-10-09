@@ -42,14 +42,14 @@ Bold symbols denote vectors/matrices. Element-wise product is $\odot$. Broadcast
 Given $\v{X}\in\mathbb{R}^{B\times K}$, $\v{Z}\in\mathbb{R}^{K\times M}$, $\v{r}\in\mathbb{R}^{M}$, $c\in\mathbb{R}$:
 \begin{align}
 \lam_b &:= \frac{2}{1 - c\sum_{k=1}^K \v{X}{bk}^2}\in\mathbb{R},\quad \v{\lam}\equiv(\lam_b)_{b=1}^B \\
-\v{zn}{m} &:= \Big(\sum_{k=1}^K \v{Z}{km}^2\Big)^{1/2},\quad \v{zn}\in\mathbb{R}^M \\
+\v{zn}{m} &:= \max\Bigg(\Big(\sum_{k=1}^K \v{Z}{km}^2\Big)^{1/2},\ \exp(-15)\Bigg),\quad \v{zn}\in\mathbb{R}^M \\
 \v{b} &:= 2\sqrt{c}\,\odot\,\v{r}\\
 \v{P} &:= \tfrac12\Big[(\ev{b}+\ev{-b})\,\odot\,\Big( \tfrac{\sqrt{c}\,\v{\lam}}{\v{zn}} \,\odot\, \v{XZ}\Big)\ -\ (\ev{b}-\ev{-b})\,\odot\,(\lam-\mathbf{1})\Big] \in \mathbb{R}^{B\times M} \\
 \v{D} &:= 2\odot \v{zn}\,\odot\, \log\!\big(\v{P}+\sqrt{\v{P}^2+\mathbf{1}}\big) \\
 \v{num} &:= \tfrac{1}{2\sqrt{c}}\,(\ev{D}-\ev{-D}) \\
 \v{den}{b} &:= 1 + \sqrt{\,1 + c \sum_{m=1}^M \v{num}{bm}^2\,},\quad \v{den}\equiv(\v{den}{b})_{b=1}^B \\
 \v{Y} &:= \tfrac{\v{num}}{\v{den}} \\
-\v{yn}_b &:= \Big(\sum_{m=1}^M \v{Y}{bm}^2\Big)^{1/2},\quad \v{yn}\equiv(\v{yn}_b)_{b=1}^B \\
+\v{yn}_i &:= \max\Bigg(\Big(\sum_{m=1}^M \v{Y}{bm}^2\Big)^{1/2}\ , \exp(-15) \Bigg),\quad \v{yn}\equiv(\v{yn}_i)_{i=1}^B \\
 \v{mn}_i &:= \min\!\Big(\v{yn}{i},\,\C\Big),\quad \C = \tfrac{1-\epsilon}{\sqrt{\,c+\exp(-15)\,}},\ \quad \v{mn}\equiv(\v{mn}_i)_{i=1}^B \\
 \v{py} &:= \v{Y}\,\odot\,\frac{\v{mn}}{\v{yn}}.
 \end{align}
@@ -147,23 +147,25 @@ With $\v{D}{bm}=2\,\v{zn}{m}\,\log\!\big(\v{P}{bm}+\sqrt{\v{P}{bm}^2+1}\big)$:
 &= 2\,\log\!\big(\v{P}{bm}+\sqrt{\v{P}{bm}^2+1}\big)\,\ddfrac{\v{zn}{m}}{\v{Z}{km}}
 + \frac{2\,\v{zn}{m}}{\sqrt{\v{P}{bm}^2+1}}\,\ddfrac{\v{P}{bm}}{\v{Z}{km}},
 \\
-\ddfrac{\v{zn}{m}}{\v{Z}{km}} &= \frac{\v{Z}{km}}{\v{zn}{m}},\qquad
-\ddfrac{\v{P}{bm}}{\v{Z}{km}}
-= \tfrac12(\ev{b}{m}+\ev{-b}{m})\,\sqrt{c}\,\lam_b\,
-\Big(\v{X}{bk}\,\v{zn}{m}^{-1} - \v{XZ}{bm}\,\v{Z}{km}\,\v{zn}{m}^{-3}\Big).
+\ddfrac{\v{zn}{m}}{\v{Z}{km}} &= \begin{cases}\frac{\v{Z}{km}}{\v{zn}{m}},\quad &\text{if}\ \v{zn}{m} > \exp(-15) \\ 0,\quad &\text{otherwise} \end{cases} \\
+\ddfrac{\v{P}{bm}}{\v{Z}{km}} &= \tfrac12(\ev{b}{m}+\ev{-b}{m})\,\sqrt{c}\,\lam_b\,
+\Big(\v{X}{bk}\,\v{zn}{m}^{-1} - \v{XZ}{bm}\,\v{zn}{m}^{-2}\,\ddfrac{\v{zn}{m}}{\v{Z}{km}}\Big).
+\end{align}
+Define:
+
+\begin{align}
+  \T{7}{bm} &:= \begin{cases}
+  \T{6}{bm}\,\v{zn}{m}^{-1}\left( 2\,\log\left(\v{P}{bm} + \sqrt{\v{P}{bm}^2 + 1}\right) - \frac{(\ev{b} + \ev{-b})\,\sqrt{c}\,\lam_b\,\v{XZ}{bm}\,\v{zn}{m}^{-1}}{\sqrt{\v{P}{bm}^2 + 1}}\right),\quad &\text{if}\, \v{zn}{m} > \exp(-15) \\
+  0,\quad & \text{otherwise} 
+  \end{cases}\\
+  \T{8}{bm} &:= \T{6}{bm}\,\frac{(\ev{b} + \ev{-b})\,\sqrt{c}\,\lam_b}{\sqrt{\v{P}{bm}^2 + 1}}
 \end{align}
 Collecting:
 \begin{align}
-\ddfrac{\mathcal{L}}{\v{Z}{km}} =& \sum_b \Bigg[\v{Z}{km}\,\underbrace{\T{6}{bm}\,\v{zn}{m}^{-1}\left( 2\,\log\left(\v{P}{bm} + \sqrt{\v{P}{bm}^2 + 1}\right) - \frac{(\ev{b} + \ev{-b})\,\sqrt{c}\,\lam_b\,\v{XZ}{bm}\,\v{zn}{m}^{-1}}{\sqrt{\v{P}{bm}^2 + 1}}\right)}_{:=\T{7}{bm}} + \\
-& + \v{X}{bk}\,\underbrace{\T{6}{bm}\,\frac{(\ev{b} + \ev{-b})\,\sqrt{c}\,\lam_b}{\sqrt{\v{P}{bm}^2 + 1}}}_{:=\T{8}{bm}}\Bigg] \\
-\end{align}
-Then
-\[
-\ddfrac{\mathcal{L}}{\v{Z}{km}}
-= \sum_b \Big[\T{7}{bm}\,\v{Z}{km} + \T{8}{bm}\,\v{X}{bk}\Big],
+\ddfrac{\mathcal{L}}{\v{Z}{km}} = \sum_b \Big(\v{Z}{km}\,\T{7}{bm} + \v{X}{bk}\,\T{8}{bm}\Big),
 \quad
 \boxed{\ \ddfrac{\mathcal{L}}{\v{Z}} = \v{Z}\,\odot\,\colnorm{\T{7}}\ +\ \v{X}^\top \T{8}\ }\in\mathbb{R}^{K\times M}.
-\]
+\end{align}
 
 % ---------- Backward w.r.t. r ----------
 \section{Backward w.r.t. $\v{r}$}
