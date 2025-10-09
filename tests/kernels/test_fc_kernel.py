@@ -99,19 +99,30 @@ def test_bwd(bias_flag: bool):
     ), "Gradcheck failed for Poincare FC layer"
 
 
-def test_conv():
+@pytest.mark.parametrize("kernel_size", [1, 3])
+@pytest.mark.parametrize("in_channels", [1, 3])
+@pytest.mark.parametrize("out_channels", [4, 8])
+@pytest.mark.parametrize("padding", [0, 1])
+def test_conv(kernel_size, in_channels, out_channels, padding):
     torch.manual_seed(0)
     manifold = PoincareBall(Curvature(0.1), use_triton_backend=False)
-    conv = hnn.HConvolution2d(3, 8, 3, manifold, padding=1).cuda()
+    conv = hnn.HConvolution2d(
+        in_channels, out_channels, kernel_size, manifold, padding=padding
+    ).cuda()
     conv.train(False)
 
     torch.manual_seed(0)
     manifold2 = PoincareBall(Curvature(0.1), use_triton_backend=True)
-    conv2 = hnn.HConvolution2d(3, 8, 3, manifold2, padding=1).cuda()
+    conv2 = hnn.HConvolution2d(
+        in_channels, out_channels, kernel_size, manifold2, padding=padding
+    ).cuda()
     conv2.train(False)
     assert_allclose(conv.weights.tensor, conv2.weights.tensor, "weights")
 
-    x = torch.rand((64, 3, 32, 32), dtype=torch.float32, device="cuda")
+    batch_size = 8
+    height = 16
+    width = 16
+    x = torch.rand((batch_size, in_channels, height, width), dtype=torch.float32, device="cuda")
     tangents = TangentTensor(data=x, man_dim=1, manifold=manifold)
     manifold_inputs = manifold.expmap(tangents)
     out = conv(manifold_inputs)

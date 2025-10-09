@@ -132,8 +132,7 @@ def _poincare_fc_fwd_kernel(
     den = 1.0 + tl.sqrt(1.0 + c * den_acc)
 
     # calculate the euclidean norm of the output
-    deni = 1 / den
-    y_norm = tl.sqrt(den_acc * deni * deni)
+    y_norm = tl.sqrt(den_acc / (den * den))
     y_norm = tl.clamp(y_norm, 1e-15, 1e15)
 
     # write denominator

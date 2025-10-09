@@ -78,20 +78,17 @@ def _poincare_fc_bwd_kernel(
 
     sq_p2_1, log_p_sq, eb_sum, eb_dif, ed_sum, num = single_block_fwd(b, lam, zn, XZ, cs)
 
-    # calculate outputs for dx
-    deni = 1 / den
-    deni_1 = deni * (1 / (den - 1))
-    zni = 1 / zn
+    den1 = den * (den - 1)
 
     # T2
-    T2 = deni * (T1 - c * num * deni_1 * T1_num)
+    T2 = (T1 - c * num / den1 * T1_num) / den
 
     # T3
     ed_div = ed_sum / (2 * cs)
     T3 = T2 * ed_div * zn / sq_p2_1
 
     # T4: multiply by lambda after summation to save compute
-    eb_div = eb_sum * zni
+    eb_div = eb_sum / zn
     T4 = T3 * (cs * XZ * eb_div - eb_dif)
     T4_sum = tl.sum(T4 * mask_m.to(tl.float32)) * lam * lam * c
 
@@ -103,9 +100,9 @@ def _poincare_fc_bwd_kernel(
     tl.store(T5_ptr + offs_m, T5, mask=mask_m)
 
     # calculate outputs for dz
-    T6 = T1 * deni * (1 - c * num * num * deni_1) * ed_div
+    T6 = T1 * (1 - c * num * num / den1) * ed_div / den
     _tmp = eb_sum * cs * lam / sq_p2_1
-    T7 = T6 * zni * (2 * log_p_sq - _tmp * XZ * zni)
+    T7 = T6 * (2 * log_p_sq - _tmp * XZ / zn) / zn
     T8 = T6 * _tmp
 
     # write output for dz
@@ -113,7 +110,7 @@ def _poincare_fc_bwd_kernel(
     tl.atomic_add(T7_sum_ptr + offs_m, T7, mask=mask_m)
 
     # calculate outputs for dr
-    T9 = T6 * cs * zni / sq_p2_1 * (eb_dif * c * lam * zni - eb_sum * (lam - 1))
+    T9 = T6 * cs / zn / sq_p2_1 * (eb_dif * c * lam / zn - eb_sum * (lam - 1))
     tl.atomic_add(dr_ptr + offs_m, T9, mask=mask_m)
 
 
@@ -160,8 +157,7 @@ def _dL_dY_kernel(
     else:
         dout_y_sum = tl.load(dout_y_sum_ptr + pid_b)
         Y = tl.load(Y_ptr + offs_m, mask=mask_m, other=0.0)
-        yni = 1 / yn
-        T1 = max_norm * yni * (dout - yni * yni * Y * dout_y_sum)
+        T1 = max_norm * (dout - Y * dout_y_sum / (yn * yn)) / yn
 
     tl.atomic_add(T1_num_ptr + pid_b, tl.sum(num * T1))
     tl.store(T1_ptr + offs_m, T1, mask=mask_m)
