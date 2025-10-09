@@ -3,6 +3,7 @@ import triton
 import triton.language as tl
 
 from hypll.kernels.fc_fwd_kernel import single_block_fwd
+from hypll.utils.memory import gpu_memory_pool
 
 
 def get_autotune_configs():
@@ -192,34 +193,25 @@ def poincare_fc_bwd_triton(
     cs = cs if isinstance(cs, float) else cs.item()
 
     # preallocate GPU buffers
-    T1 = torch.empty_like(XZ)
-    T1_num = torch.empty_like(lam)
+    T1 = gpu_memory_pool.get_shared("T1", XZ.shape, torch.float32)
+    T1_num = gpu_memory_pool.get_shared("T1_num", lam.shape, torch.float32)
+    T4_sum = gpu_memory_pool.get_shared("T4_sum", lam.shape, torch.float32)
+    T5 = gpu_memory_pool.get_shared("T5", XZ.shape, torch.float32)
+    T7_sum = gpu_memory_pool.get_shared("T7_sum", b.shape, torch.float32)
+    T8 = gpu_memory_pool.get_shared("T7_sum", XZ.shape, torch.float32)
+
+    T1_num.zero_()
+    T4_sum.zero_()
+    T7_sum.zero_()
+
     dX = torch.empty_like(X)
     dZ = torch.empty_like(Z)
     dr = torch.empty_like(b)
-    T4_sum = torch.empty_like(lam)
-    T5 = torch.empty_like(XZ)
-    T7_sum = torch.empty_like(b)
-    T8 = torch.empty_like(T5)
-
-    # zero out T1_num, dr, T4_sum, T7_sum
-    zeros_M = torch.zeros_like(b, device="cpu")
-    zeros_B = torch.zeros_like(lam, device="cpu")
-
-    transfer_stream_1 = torch.cuda.Stream()
-    with torch.cuda.stream(transfer_stream_1):
-        T1_num.copy_(zeros_B, non_blocking=True)
-
-    transfer_stream_2 = torch.cuda.Stream()
-    with torch.cuda.stream(transfer_stream_2):
-        T4_sum.copy_(zeros_B, non_blocking=True)
-        T7_sum.copy_(zeros_M, non_blocking=True)
-        dr.copy_(zeros_M, non_blocking=True)
+    dr.zero_()
 
     # get dL_dY
     dout_y_sum = (dout * Y).sum(1)
     grid = lambda meta: (B, triton.cdiv(M, meta["BLOCK_M"]))
-    torch.cuda.current_stream().wait_stream(transfer_stream_1)
     _dL_dY_kernel[grid](
         dout,
         Y,
@@ -237,7 +229,6 @@ def poincare_fc_bwd_triton(
         M,
     )
 
-    torch.cuda.current_stream().wait_stream(transfer_stream_2)
     _poincare_fc_bwd_kernel[grid](
         T1,
         T1_num,
