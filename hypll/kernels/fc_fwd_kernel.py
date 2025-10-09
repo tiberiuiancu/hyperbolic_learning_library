@@ -51,14 +51,15 @@ def single_block_fwd(
     xz,
     cs,
 ):
+    znc = tl.clamp(zn, 1e-15, 1e30)
     eb = tl.exp(b)
     ebi = 1 / eb
     eb_sum = eb + ebi
     eb_dif = eb - ebi
-    P = 0.5 * (eb_sum * (cs * lam / zn * xz) - eb_dif * (lam - 1))
+    P = 0.5 * (eb_sum * (cs * lam / znc * xz) - eb_dif * (lam - 1))
     sq_p2_1 = tl.sqrt(P * P + 1)
     log_p_sq = tl.log(P + sq_p2_1)
-    D = 2.0 * zn * log_p_sq
+    D = 2.0 * znc * log_p_sq
     ed = tl.exp(D)
     edi = 1 / ed
     ed_dif = ed - edi
@@ -212,7 +213,7 @@ def poincare_fc_project_fwd_triton(
     # Compute required intermediates
     c_val = float(c) if not torch.is_tensor(c) else float(c.item())
     cs = math.sqrt(c_val)
-    zn = z.norm(dim=0).clamp_min(1e-15)  # [M]
+    zn = z.norm(dim=0)  # [M]
     xz = x @ z  # [B, M]
 
     # Allocate output tensors and caches

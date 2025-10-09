@@ -79,16 +79,17 @@ def _poincare_fc_bwd_kernel(
     sq_p2_1, log_p_sq, eb_sum, eb_dif, ed_sum, num = single_block_fwd(b, lam, zn, XZ, cs)
 
     den1 = den * (den - 1)
+    znc = tl.clamp(zn, 1e-15, 1e30)
 
     # T2
     T2 = (T1 - c * num / den1 * T1_num) / den
 
     # T3
     ed_div = ed_sum / (2 * cs)
-    T3 = T2 * ed_div * zn / sq_p2_1
+    T3 = T2 * ed_div * znc / sq_p2_1
 
     # T4: multiply by lambda after summation to save compute
-    eb_div = eb_sum / zn
+    eb_div = eb_sum / znc
     T4 = T3 * (cs * XZ * eb_div - eb_dif)
     T4_sum = tl.sum(T4 * mask_m.to(tl.float32)) * lam * lam * c
 
@@ -102,7 +103,7 @@ def _poincare_fc_bwd_kernel(
     # calculate outputs for dz
     T6 = T1 * (1 - c * num * num / den1) * ed_div / den
     _tmp = eb_sum * cs * lam / sq_p2_1
-    T7 = tl.where(zn > (1e-15 + 1e-20), T6 * (2 * log_p_sq - _tmp * XZ / zn) / zn, 0)
+    T7 = tl.where(zn > 1e-15, T6 * (2 * log_p_sq - _tmp * XZ / znc) / znc, 0)
     T8 = T6 * _tmp
 
     # write output for dz
@@ -110,7 +111,7 @@ def _poincare_fc_bwd_kernel(
     tl.atomic_add(T7_sum_ptr + offs_m, T7, mask=mask_m)
 
     # calculate outputs for dr
-    T9 = T6 * cs / zn / sq_p2_1 * (eb_dif * c * lam / zn - eb_sum * (lam - 1))
+    T9 = T6 * cs / znc / sq_p2_1 * (eb_dif * c * lam / znc - eb_sum * (lam - 1))
     tl.atomic_add(dr_ptr + offs_m, T9, mask=mask_m)
 
 
