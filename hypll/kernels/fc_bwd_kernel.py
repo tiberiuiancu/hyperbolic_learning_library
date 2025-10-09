@@ -102,7 +102,7 @@ def _poincare_fc_bwd_kernel(
     # calculate outputs for dz
     T6 = T1 * (1 - c * num * num / den1) * ed_div / den
     _tmp = eb_sum * cs * lam / sq_p2_1
-    T7 = tl.where(zn > 1e-15, T6 * (2 * log_p_sq - _tmp * XZ / zn) / zn, 0)
+    T7 = tl.where(zn > (1e-15 + 1e-20), T6 * (2 * log_p_sq - _tmp * XZ / zn) / zn, 0)
     T8 = T6 * _tmp
 
     # write output for dz
