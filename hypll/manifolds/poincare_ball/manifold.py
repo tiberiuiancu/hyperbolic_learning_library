@@ -50,7 +50,7 @@ class PoincareBall(Manifold):
 
     """
 
-    def __init__(self, c: Curvature, use_triton_backend: bool = True):
+    def __init__(self, c: Curvature, use_triton_backend: bool = False):
         """Initializes an instance of PoincareBall manifold.
 
         Examples:
@@ -149,7 +149,20 @@ class PoincareBall(Manifold):
                 f"{z.man_dim} instead"
             )
         if self.use_triton_backend:
-            new_tensor = FastPoincareFC.apply(x.tensor, z.tensor, bias, self.c(), x.man_dim)
+            inputs = x.tensor
+            if inputs.ndim == 3:
+                # assume we're attempting a convolution
+                if x.man_dim != 1:
+                    raise ValueError(
+                        f"Expected the manifold dimension of the convolution input to be 1, but got "
+                        f"{x.man_dim} instead"
+                    )
+                A, B, C = inputs.shape
+                inputs = inputs.transpose(1, 2).reshape(A * C, B)
+                new_tensor = FastPoincareFC.apply(inputs, z.tensor, bias, self.c(), x.man_dim)
+                new_tensor = new_tensor.reshape(A, C, -1).transpose(1, 2)
+            else:
+                new_tensor = FastPoincareFC.apply(x.tensor, z.tensor, bias, self.c(), x.man_dim)
         else:
             new_tensor = poincare_fully_connected(
                 x=x.tensor, z=z.tensor, bias=bias, c=self.c(), dim=x.man_dim

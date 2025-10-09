@@ -1,14 +1,21 @@
+from unittest.mock import patch
 import torch, pytest
 
 from hypll.kernels.fc_fwd_kernel import (
     poincare_fc_fwd_project_ref,
     poincare_fc_project_fwd_triton,
 )
+from hypll.manifolds.poincare_ball.curvature import Curvature
+from hypll.manifolds.poincare_ball.manifold import PoincareBall
 from hypll.manifolds.poincare_ball.math.diffgeom import project
 from hypll.manifolds.poincare_ball.math.linalg import poincare_fully_connected
 from hypll.kernels.fc_layer import FastPoincareFC
 
+import hypll.nn as hnn
+
 import pytest
+
+from hypll.tensors.tangent_tensor import TangentTensor
 
 RTOL = 1
 ATOL = 1e-3
@@ -90,3 +97,28 @@ def test_bwd(bias_flag: bool):
         rtol=RTOL,
         nondet_tol=NONDET_TOL,
     ), "Gradcheck failed for Poincare FC layer"
+
+
+def test_conv():
+    torch.manual_seed(0)
+    manifold = PoincareBall(Curvature(0.1), use_triton_backend=False)
+    conv = hnn.HConvolution2d(3, 8, 3, manifold, padding=1).cuda()
+    conv.train(False)
+
+    torch.manual_seed(0)
+    manifold2 = PoincareBall(Curvature(0.1), use_triton_backend=True)
+    conv2 = hnn.HConvolution2d(3, 8, 3, manifold2, padding=1).cuda()
+    conv2.train(False)
+    assert_allclose(conv.weights.tensor, conv2.weights.tensor, "weights")
+
+    x = torch.rand((64, 3, 32, 32), dtype=torch.float32, device="cuda")
+    tangents = TangentTensor(data=x, man_dim=1, manifold=manifold)
+    manifold_inputs = manifold.expmap(tangents)
+    out = conv(manifold_inputs)
+
+    tangents2 = TangentTensor(data=x, man_dim=1, manifold=manifold2)
+    manifold_inputs2 = manifold2.expmap(tangents2)
+    assert_allclose(tangents.tensor, tangents2.tensor, "tangents")
+
+    out2 = conv2(manifold_inputs2)
+    assert_allclose(out.tensor, out2.tensor, "conv output")

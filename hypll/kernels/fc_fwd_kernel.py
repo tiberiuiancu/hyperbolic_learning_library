@@ -207,6 +207,9 @@ def poincare_fc_project_fwd_triton(
     K2, M = z.shape
     assert K == K2, "Dimension mismatch"
 
+    if not x.is_contiguous():
+        x.contiguous()
+
     # Compute required intermediates
     c_val = float(c) if not torch.is_tensor(c) else float(c.item())
     cs = math.sqrt(c_val)
