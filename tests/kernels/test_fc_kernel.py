@@ -16,6 +16,7 @@ import hypll.nn as hnn
 import pytest
 
 from hypll.tensors.tangent_tensor import TangentTensor
+from tests.kernels.utils import assert_allclose, safe_rand
 
 RTOL = 1
 ATOL = 1e-3
@@ -25,30 +26,13 @@ EPS = 1e-3
 B, K, M = 16, 128, 64
 
 
-def _rand(*shape, grad: bool = False):
-    return (torch.randn(*shape, dtype=torch.float32, requires_grad=grad).cuda() * 0.1).clamp(-1, 1)
-
-
-def assert_allclose(x, y, message: str = ""):
-    assert type(x) == type(y), message
-    if isinstance(x, float):
-        assert abs(x - y) < ATOL, message
-    elif not isinstance(x, torch.Tensor):
-        assert x == y, message
-    else:
-        assert x.shape == y.shape, f"{message} shape mismatch: {x.shape}, {y.shape}"
-        assert torch.allclose(
-            x, y, atol=ATOL
-        ), f"{message} | max diff: {(x - y).abs().max().item()}"
-
-
 @pytest.mark.parametrize("bias_flag", [True, False])
 def test_fwd_ref(bias_flag):
     c = torch.tensor(0.1, dtype=torch.float32).cuda()
 
-    x = _rand(B, K)
-    z = _rand(K, M)
-    r = _rand(M) if bias_flag else None
+    x = safe_rand(B, K)
+    z = safe_rand(K, M)
+    r = safe_rand(M) if bias_flag else None
 
     y = poincare_fully_connected(x, z, r, c)
     y = project(y, c)
@@ -61,9 +45,9 @@ def test_fwd_ref(bias_flag):
 @pytest.mark.parametrize("bias_flag", [True, False])
 def test_fwd(bias_flag: bool):
     c = torch.tensor(0.1, dtype=torch.float32).cuda()
-    x = _rand(B, K)
-    z = _rand(K, M)
-    r = _rand(M) if bias_flag else None
+    x = safe_rand(B, K)
+    z = safe_rand(K, M)
+    r = safe_rand(M) if bias_flag else None
 
     out, cache = poincare_fc_fwd_project_ref(x, z, r, c, return_cache=True)
     out_trit, cache_triton = poincare_fc_project_fwd_triton(x, z, r, c, return_cache=True)
@@ -83,9 +67,9 @@ def test_bwd(bias_flag: bool):
     torch.manual_seed(0)
 
     c = torch.tensor(0.1, dtype=torch.float32, requires_grad=False).cuda()
-    x = _rand(B, K, grad=True)
-    z = _rand(K, M, grad=True)
-    r = _rand(M, grad=True) if bias_flag else None
+    x = safe_rand(B, K, grad=True)
+    z = safe_rand(K, M, grad=True)
+    r = safe_rand(M, grad=True) if bias_flag else None
     dim = -1
     inputs = (x, z, r, c, dim)
 
