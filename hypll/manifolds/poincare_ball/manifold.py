@@ -85,7 +85,7 @@ class PoincareBall(Manifold):
         if x is None:
             dim = y.man_dim
             if self.use_triton_backend:
-                new_tensor = FastLogmap0.apply(y=y.tensor, c=self.c(), dim=dim)
+                new_tensor = FastLogmap0.apply(y.tensor, self.c(), dim)
             else:
                 new_tensor = logmap0(y=y.tensor, c=self.c(), dim=dim)
         else:
