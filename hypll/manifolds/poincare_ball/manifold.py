@@ -9,6 +9,7 @@ from torch.nn.functional import unfold
 from torch.nn.init import normal_, zeros_
 
 from hypll.kernels.fc_layer import FastPoincareFC
+from hypll.kernels.logmap0_layer import FastLogmap0
 from hypll.manifolds.base import Manifold
 from hypll.manifolds.euclidean import Euclidean
 from hypll.manifolds.poincare_ball.curvature import Curvature
@@ -83,7 +84,10 @@ class PoincareBall(Manifold):
     def logmap(self, x: Optional[ManifoldTensor], y: ManifoldTensor):
         if x is None:
             dim = y.man_dim
-            new_tensor = logmap0(y=y.tensor, c=self.c(), dim=y.man_dim)
+            if self.use_triton_backend:
+                new_tensor = FastLogmap0.apply(y.tensor, self.c(), dim)
+            else:
+                new_tensor = logmap0(y=y.tensor, c=self.c(), dim=dim)
         else:
             dim = check_dims_with_broadcasting(x, y)
             new_tensor = logmap(x=x.tensor, y=y.tensor, c=self.c(), dim=dim)
