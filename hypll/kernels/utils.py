@@ -9,6 +9,12 @@ def atanh(x):
 
 @triton.jit
 def tanh(x):
-    ex = tl.exp(x)
-    exi = tl.exp(-x)
-    return (ex - exi) / (ex + exi)
+    e2m = tl.exp(-2 * tl.abs(x))
+    t = 1 - 2 / (1 + 1 / e2m)
+    return tl.where(x > 0, t, -t)
+
+
+@triton.jit
+def sech_squared(x):
+    t = tanh(x)
+    return 1 - t * t

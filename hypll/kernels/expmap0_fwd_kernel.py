@@ -57,7 +57,7 @@ def expmap0_fwd_triton(v: torch.Tensor, c: float, return_cache: bool = False):
 
     grid = lambda meta: (B, triton.cdiv(M, meta["BLOCK_M"]))
     _expmap0_fwd_kernel[grid](v, vn, cs, maxnorm, out, v.stride(0), out.stride(0), B, M)
-    cache = (vn, cs)
+    cache = (vn, cs, maxnorm)
     return (out, cache) if return_cache else out
 
 
