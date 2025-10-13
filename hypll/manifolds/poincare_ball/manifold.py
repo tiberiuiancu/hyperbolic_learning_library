@@ -8,6 +8,7 @@ from torch.nn.common_types import _size_2_t
 from torch.nn.functional import unfold
 from torch.nn.init import normal_, zeros_
 
+from hypll.kernels.expmap0_layer import FastExpmap0
 from hypll.kernels.fc_layer import FastPoincareFC
 from hypll.kernels.logmap0_layer import FastLogmap0
 from hypll.manifolds.base import Manifold
@@ -76,7 +77,10 @@ class PoincareBall(Manifold):
     def expmap(self, v: TangentTensor) -> ManifoldTensor:
         dim = v.broadcasted_man_dim
         if v.manifold_points is None:
-            new_tensor = expmap0(v=v.tensor, c=self.c(), dim=dim)
+            if self.use_triton_backend:
+                new_tensor = FastExpmap0.apply(v, self.c(), dim)
+            else:
+                new_tensor = expmap0(v=v.tensor, c=self.c(), dim=dim)
         else:
             new_tensor = expmap(x=v.manifold_points.tensor, v=v.tensor, c=self.c(), dim=dim)
         return ManifoldTensor(data=new_tensor, manifold=self, man_dim=dim)
