@@ -32,6 +32,7 @@ def _logmap0_bwd_kernel(
     dy_stride_b,
     B,
     M,
+    ACTIVATION: tl.constexpr,
     BLOCK_M: tl.constexpr,
 ):
     pid_b = tl.program_id(0)
@@ -58,11 +59,15 @@ def _logmap0_bwd_kernel(
     )
     dy = term1 + term2
 
+    if ACTIVATION == "relu":
+        # sign(relu(y)) = sign(relu(out)), so we don't need out for bwd pass
+        dy = tl.where(y > 0.0, dy, 0.0)
+
     tl.store(dy_ptr + offs_m, dy, mask=mask_m)
 
 
 def logmap0_bwd_triton(
-    dout: torch.Tensor, y: torch.Tensor, yn: torch.Tensor, cs: float
+    dout: torch.Tensor, y: torch.Tensor, yn: torch.Tensor, cs: float, activation: str = "none"
 ) -> torch.Tensor:
     assert y.ndim == 2
     B, M = y.shape
@@ -73,7 +78,7 @@ def logmap0_bwd_triton(
 
     grid = lambda meta: (B, triton.cdiv(M, meta["BLOCK_M"]))
     _logmap0_bwd_kernel[grid](
-        dout, y, dout_y_sum, yn, cs, dy, y.stride(0), dout.stride(0), dy.stride(0), B, M
+        dout, y, dout_y_sum, yn, cs, dy, y.stride(0), dout.stride(0), dy.stride(0), B, M, activation
     )
 
     return dy

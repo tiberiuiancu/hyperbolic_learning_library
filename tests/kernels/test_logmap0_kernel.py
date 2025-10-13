@@ -1,3 +1,4 @@
+import pytest
 import torch
 from hypll.kernels.logmap0_fwd_kernel import logmap0_fwd_triton, logmap0_ref
 from hypll.kernels.logmap0_layer import FastLogmap0
@@ -18,13 +19,14 @@ def test_fwd():
     assert_allclose(logmap0_ref(y, c), logmap0_fwd_triton(y, c.item()), equal_nan=True)
 
 
-def test_bwd():
+@pytest.mark.parametrize("activation", ["none", "relu"])
+def test_bwd(activation):
     torch.manual_seed(1)
 
     c = torch.tensor(0.1, dtype=torch.float32, requires_grad=False).cuda()
     y = safe_rand(B, M, grad=True)
     dim = -1
-    inputs = (y, c, dim)
+    inputs = (y, c, dim, activation)
 
     assert torch.autograd.gradcheck(
         FastLogmap0.apply,
