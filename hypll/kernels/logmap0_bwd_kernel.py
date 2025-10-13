@@ -60,8 +60,8 @@ def _logmap0_bwd_kernel(
     dy = term1 + term2
 
     if ACTIVATION == "relu":
-        # sign(relu(y)) = sign(relu(out)), so we don't need out for bwd pass
-        dy = tl.where(y > 0.0, dy, 0.0)
+        # sign(y) = sign(out), so we don't need out for bwd pass
+        dy = tl.where(y < 0.0, 0.0, dy)
 
     tl.store(dy_ptr + offs_m, dy, mask=mask_m)
 
@@ -72,7 +72,12 @@ def logmap0_bwd_triton(
     assert y.ndim == 2
     B, M = y.shape
 
-    dout_y_sum = (dout * y).sum(dim=-1)
+    if activation == "none":
+        relu_mask = torch.ones_like(dout)
+    else:
+        relu_mask = y > 0.0
+
+    dout_y_sum = (dout * relu_mask * y).sum(dim=-1)
     assert dout_y_sum.shape[0] == y.shape[0]
     dy = torch.zeros_like(y)
 

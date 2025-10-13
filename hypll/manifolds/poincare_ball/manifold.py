@@ -1,5 +1,5 @@
 import functools
-from typing import List, Optional, Tuple, Union
+from typing import Callable, List, Optional, Tuple, Union
 
 import torch
 from torch import Tensor, empty, eye, no_grad
@@ -78,7 +78,7 @@ class PoincareBall(Manifold):
         dim = v.broadcasted_man_dim
         if v.manifold_points is None:
             if self.use_triton_backend:
-                new_tensor = FastExpmap0.apply(v, self.c(), dim)
+                new_tensor = FastExpmap0.apply(v.tensor, self.c(), dim)
             else:
                 new_tensor = expmap0(v=v.tensor, c=self.c(), dim=dim)
         else:
@@ -373,3 +373,14 @@ class PoincareBall(Manifold):
             cat = torch.cat([t.tensor for t in manifold_tensors], dim=dim)
             man_dim = manifold_tensors[0].man_dim
             return ManifoldTensor(data=cat, manifold=self, man_dim=man_dim)
+
+    def op_in_tangent_space(self, op: Callable, y: ManifoldTensor) -> ManifoldTensor:
+        if self.use_triton_backend and op == torch.nn.functional.relu:
+            dim = y.man_dim
+            y.tensor = FastLogmap0.apply(y.tensor, self.c(), dim, "relu")
+            y.tensor = FastExpmap0.apply(y.tensor, self.c(), dim)
+            return y
+        else:
+            y = self.logmap(x=None, y=y)
+            y.tensor = op(y.tensor)
+            return self.expmap(y)

@@ -14,7 +14,7 @@ class FastLogmap0(torch.autograd.Function):
     ):
         # TODO: handle y.ndim > 2
         y = y.movedim(source=dim, destination=-1)
-        out, (yn, cs) = logmap0_fwd_triton(y, c.item(), return_cache=True)
+        out, (yn, cs) = logmap0_fwd_triton(y, c.item(), activation, return_cache=True)
         ctx.save_for_backward(y, yn)
         ctx.cs = cs
         ctx.dim = dim

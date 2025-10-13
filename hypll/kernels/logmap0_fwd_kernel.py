@@ -48,7 +48,7 @@ def _logmap0_fwd_kernel(
 
     out = atanh(yncs) * y / yncs
     if ACTIVATION == "relu":
-        out = tl.where(out > 0.0, out, 0.0)
+        out = tl.where(out < 0.0, 0.0, out)
     tl.store(out_ptr + offs_m, out, mask=mask_m)
 
 
@@ -69,6 +69,9 @@ def logmap0_fwd_triton(
     return (out, cache) if return_cache else out
 
 
-def logmap0_ref(y: torch.Tensor, c: torch.Tensor, dim: int = -1):
+def logmap0_ref(y: torch.Tensor, c: torch.Tensor, dim: int = -1, activation: str = "none"):
     y_norm_c_sqrt = y.norm(dim=dim, keepdim=True).clamp_min(1e-15) * c.sqrt()
-    return torch.atanh(y_norm_c_sqrt) * y / y_norm_c_sqrt
+    out = torch.atanh(y_norm_c_sqrt) * y / y_norm_c_sqrt
+    if activation == "relu":
+        out = torch.nn.functional.relu(out)
+    return out
