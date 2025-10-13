@@ -1,4 +1,3 @@
-from unittest.mock import patch
 import torch, pytest
 
 from hypll.kernels.fc_fwd_kernel import (
@@ -16,7 +15,7 @@ import hypll.nn as hnn
 import pytest
 
 from hypll.tensors.tangent_tensor import TangentTensor
-from tests.kernels.utils import assert_allclose, safe_rand
+from tests.kernels.utils import assert_allclose, safe_rand, requires_cuda
 
 RTOL = 1
 ATOL = 1e-3
@@ -26,6 +25,7 @@ EPS = 1e-3
 B, K, M = 16, 128, 64
 
 
+@requires_cuda
 @pytest.mark.parametrize("bias_flag", [True, False])
 def test_fwd_ref(bias_flag):
     c = torch.tensor(0.1, dtype=torch.float32).cuda()
@@ -42,6 +42,7 @@ def test_fwd_ref(bias_flag):
     assert_allclose(y, y_ref)
 
 
+@requires_cuda
 @pytest.mark.parametrize("bias_flag", [True, False])
 def test_fwd(bias_flag: bool):
     c = torch.tensor(0.1, dtype=torch.float32).cuda()
@@ -62,6 +63,7 @@ def test_fwd(bias_flag: bool):
     assert_allclose(out, out_trit)
 
 
+@requires_cuda
 @pytest.mark.parametrize("bias_flag", [True, False])
 def test_bwd(bias_flag: bool):
     torch.manual_seed(0)
@@ -83,6 +85,7 @@ def test_bwd(bias_flag: bool):
     ), "Gradcheck failed for Poincare FC layer"
 
 
+@requires_cuda
 @pytest.mark.parametrize("kernel_size", [1, 3])
 @pytest.mark.parametrize("in_channels", [1, 3])
 @pytest.mark.parametrize("out_channels", [4, 8])

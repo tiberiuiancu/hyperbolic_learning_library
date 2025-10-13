@@ -3,7 +3,7 @@ from torch.nn.functional import relu
 
 from hypll.manifolds import Manifold
 from hypll.tensors import ManifoldTensor
-from hypll.utils.layer_utils import check_if_manifolds_match, op_in_tangent_space
+from hypll.utils.layer_utils import check_if_manifolds_match
 
 
 class HReLU(Module):
@@ -11,10 +11,9 @@ class HReLU(Module):
         super(HReLU, self).__init__()
         self.manifold = manifold
 
-    def forward(self, input: ManifoldTensor) -> ManifoldTensor:
-        check_if_manifolds_match(layer=self, input=input)
-        return op_in_tangent_space(
+    def forward(self, x: ManifoldTensor) -> ManifoldTensor:
+        check_if_manifolds_match(layer=self, input=x)
+        return x.manifold.op_in_tangent_space(
             op=relu,
-            manifold=self.manifold,
-            input=input,
+            input=x,
         )

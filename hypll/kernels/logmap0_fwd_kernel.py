@@ -21,7 +21,16 @@ def get_autotune_configs():
 @triton.autotune(configs=get_autotune_configs(), key=["B", "M"])
 @triton.jit
 def _logmap0_fwd_kernel(
-    y_ptr, yn_ptr, cs, out_ptr, y_stride_b, out_stride_b, B, M, BLOCK_M: tl.constexpr
+    y_ptr,
+    yn_ptr,
+    cs,
+    out_ptr,
+    y_stride_b,
+    out_stride_b,
+    B,
+    M,
+    ACTIVATION: tl.constexpr,
+    BLOCK_M: tl.constexpr,
 ):
     """each program computes a block_m slice in one row"""
     pid_b = tl.program_id(0)
@@ -38,10 +47,14 @@ def _logmap0_fwd_kernel(
     yncs = tl.where(yn < 1e-15, 1e-15, yn) * cs
 
     out = atanh(yncs) * y / yncs
+    if ACTIVATION == "relu":
+        out = tl.where(out < 0.0, 0.0, out)
     tl.store(out_ptr + offs_m, out, mask=mask_m)
 
 
-def logmap0_fwd_triton(y: torch.Tensor, c: float, return_cache: bool = False):
+def logmap0_fwd_triton(
+    y: torch.Tensor, c: float, activation: str = "none", return_cache: bool = False
+):
     assert y.ndim == 2  # assume y [B, M]
     B, M = y.shape
 
@@ -51,11 +64,14 @@ def logmap0_fwd_triton(y: torch.Tensor, c: float, return_cache: bool = False):
     cs = c**0.5
 
     grid = lambda meta: (B, triton.cdiv(M, meta["BLOCK_M"]))
-    _logmap0_fwd_kernel[grid](y, yn, cs, out, y.stride(0), out.stride(0), B, M)
+    _logmap0_fwd_kernel[grid](y, yn, cs, out, y.stride(0), out.stride(0), B, M, activation)
     cache = (yn, cs)
     return (out, cache) if return_cache else out
 
 
-def logmap0_ref(y: torch.Tensor, c: torch.Tensor, dim: int = -1):
+def logmap0_ref(y: torch.Tensor, c: torch.Tensor, dim: int = -1, activation: str = "none"):
     y_norm_c_sqrt = y.norm(dim=dim, keepdim=True).clamp_min(1e-15) * c.sqrt()
-    return torch.atanh(y_norm_c_sqrt) * y / y_norm_c_sqrt
+    out = torch.atanh(y_norm_c_sqrt) * y / y_norm_c_sqrt
+    if activation == "relu":
+        out = torch.nn.functional.relu(out)
+    return out

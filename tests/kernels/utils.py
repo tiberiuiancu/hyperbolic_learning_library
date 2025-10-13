@@ -1,3 +1,4 @@
+import pytest
 import torch
 
 
@@ -15,4 +16,9 @@ def assert_allclose(x, y, message: str = "", atol: float = 1e-3, equal_nan: bool
 
 
 def safe_rand(*shape, grad: bool = False):
-    return (torch.randn(*shape, dtype=torch.float32, requires_grad=grad).cuda() * 0.1).clamp(-1, 1)
+    return (torch.randn(*shape, dtype=torch.float32, requires_grad=grad).cuda() * 0.1).clamp(
+        -0.5, 0.5
+    )
+
+
+requires_cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="requires cuda")
