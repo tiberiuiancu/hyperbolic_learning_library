@@ -35,7 +35,8 @@ class Curvature(Module):
             requires_grad=requires_grad,
         )
         self.constraining_strategy = constraining_strategy
+        self._curvature_cache = None if requires_grad else constraining_strategy(self.value)
 
     def forward(self) -> Tensor:
         """Returns curvature calculated as constraining_strategy(value)."""
-        return self.constraining_strategy(self.value)
+        return self._curvature_cache or self.constraining_strategy(self.value)

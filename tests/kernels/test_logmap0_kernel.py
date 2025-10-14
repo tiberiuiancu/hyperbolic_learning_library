@@ -25,7 +25,7 @@ def test_fwd(activation):
         logmap0_fwd_triton(y, c.item(), activation),
         equal_nan=True,
     )
-    
+
     assert_allclose(
         logmap0_ref(y, c, -1, activation),
         FastLogmap0.apply(y, c, -1, activation),
@@ -49,4 +49,4 @@ def test_bwd(activation):
         atol=ATOL,
         rtol=RTOL,
         nondet_tol=NONDET_TOL,
-    ), "Gradcheck failed for Poincare FC layer"
+    ), "Gradcheck failed"

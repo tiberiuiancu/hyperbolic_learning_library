@@ -13,7 +13,11 @@ class FastPoincareFC(torch.autograd.Function):
         c: float = 1.0,
         dim: int = -1,
     ):
-        x = x.movedim(source=dim, destination=-1)
+        if dim == x.ndim - 1:
+            dim = -1
+
+        if dim != -1:
+            x = x.movedim(source=dim, destination=-1)
         py, (y, x, z, xz, zn, b, lam, num, den, yn, max_norm, c, cs) = (
             poincare_fc_project_fwd_triton(x, z, r, c, return_cache=True)
         )
@@ -32,7 +36,8 @@ class FastPoincareFC(torch.autograd.Function):
             dout, y, x, z, xz, zn, b, lam, num, den, yn, ctx.max_norm, ctx.c, ctx.cs
         )
 
-        dx = dx.movedim(source=-1, destination=ctx.dim)
+        if ctx.dim != -1:
+            dx = dx.movedim(source=-1, destination=ctx.dim)
         dr = dr if ctx.has_bias else None
 
         return dx, dz, dr, None, None

@@ -11,8 +11,12 @@ class FastExpmap0(torch.autograd.Function):
         c: torch.Tensor,
         dim: int = -1,
     ):
+        if dim == v.ndim - 1:
+            dim = -1
+
         # TODO: handle v.ndim > 2
-        v = v.movedim(source=dim, destination=-1)
+        if dim != -1:
+            v = v.movedim(source=dim, destination=-1)
         out, (vn, cs, maxnorm) = expmap0_fwd_triton(v, c.item(), return_cache=True)
         ctx.save_for_backward(v, vn)
         ctx.cs = cs
@@ -24,5 +28,6 @@ class FastExpmap0(torch.autograd.Function):
     def backward(ctx, dout):
         v, vn = ctx.saved_tensors
         dv = expmap0_bwd_triton(dout, v, vn, ctx.cs, ctx.maxnorm)
-        dv = dv.movedim(source=-1, destination=ctx.dim)
+        if ctx.dim != -1:
+            dv = dv.movedim(source=-1, destination=ctx.dim)
         return dv, None, None

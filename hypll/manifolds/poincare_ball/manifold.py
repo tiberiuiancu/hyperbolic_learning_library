@@ -11,6 +11,7 @@ from torch.nn.init import normal_, zeros_
 from hypll.kernels.expmap0_layer import FastExpmap0
 from hypll.kernels.fc_layer import FastPoincareFC
 from hypll.kernels.logmap0_layer import FastLogmap0
+from hypll.kernels.tangent_space_op_layer import FastTangentSpaceOp
 from hypll.manifolds.base import Manifold
 from hypll.manifolds.euclidean import Euclidean
 from hypll.manifolds.poincare_ball.curvature import Curvature
@@ -374,13 +375,12 @@ class PoincareBall(Manifold):
             man_dim = manifold_tensors[0].man_dim
             return ManifoldTensor(data=cat, manifold=self, man_dim=man_dim)
 
-    def op_in_tangent_space(self, op: Callable, input: ManifoldTensor) -> ManifoldTensor:
+    def op_in_tangent_space(self, op: Callable, inputs: ManifoldTensor) -> ManifoldTensor:
         if self.use_triton_backend and op == torch.nn.functional.relu:
-            dim = input.man_dim
-            input.tensor = FastLogmap0.apply(input.tensor, self.c(), dim, "relu")
-            input.tensor = FastExpmap0.apply(input.tensor, self.c(), dim)
-            return input
+            dim = inputs.man_dim
+            inputs.tensor = FastTangentSpaceOp.apply(inputs.tensor, self.c(), dim, "relu")
+            return inputs
         else:
-            input = self.logmap(x=None, y=input)
-            input.tensor = op(input.tensor)
-            return self.expmap(input)
+            inputs = self.logmap(x=None, y=inputs)
+            inputs.tensor = op(inputs.tensor)
+            return self.expmap(inputs)

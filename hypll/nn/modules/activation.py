@@ -11,9 +11,9 @@ class HReLU(Module):
         super(HReLU, self).__init__()
         self.manifold = manifold
 
-    def forward(self, input: ManifoldTensor) -> ManifoldTensor:
-        check_if_manifolds_match(layer=self, input=input)
-        return input.manifold.op_in_tangent_space(
+    def forward(self, inputs: ManifoldTensor) -> ManifoldTensor:
+        check_if_manifolds_match(layer=self, input=inputs)
+        return inputs.manifold.op_in_tangent_space(
             op=relu,
-            input=input,
+            input=inputs,
         )
