@@ -12,6 +12,9 @@ class FastLogmap0(torch.autograd.Function):
         dim: int = -1,
         activation: str = "none",
     ):
+        if dim == y.ndim - 1:
+            dim = -1
+
         # TODO: handle y.ndim > 2
         if dim != -1:
             y = y.movedim(source=dim, destination=-1)

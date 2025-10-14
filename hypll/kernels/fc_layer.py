@@ -13,6 +13,9 @@ class FastPoincareFC(torch.autograd.Function):
         c: float = 1.0,
         dim: int = -1,
     ):
+        if dim == x.ndim - 1:
+            dim = -1
+
         if dim != -1:
             x = x.movedim(source=dim, destination=-1)
         py, (y, x, z, xz, zn, b, lam, num, den, yn, max_norm, c, cs) = (

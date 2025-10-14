@@ -11,6 +11,9 @@ class FastExpmap0(torch.autograd.Function):
         c: torch.Tensor,
         dim: int = -1,
     ):
+        if dim == v.ndim - 1:
+            dim = -1
+
         # TODO: handle v.ndim > 2
         if dim != -1:
             v = v.movedim(source=dim, destination=-1)
