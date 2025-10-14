@@ -8,10 +8,7 @@ from torch.nn.common_types import _size_2_t
 from torch.nn.functional import unfold
 from torch.nn.init import normal_, zeros_
 
-from hypll.kernels.expmap0_layer import FastExpmap0
-from hypll.kernels.fc_layer import FastPoincareFC
-from hypll.kernels.logmap0_layer import FastLogmap0
-from hypll.kernels.tangent_space_op_layer import FastTangentSpaceOp
+from hypll.kernels import FastExpmap0, FastPoincareFC, FastLogmap0, FastTangentSpaceOp
 from hypll.manifolds.base import Manifold
 from hypll.manifolds.euclidean import Euclidean
 from hypll.manifolds.poincare_ball.curvature import Curvature

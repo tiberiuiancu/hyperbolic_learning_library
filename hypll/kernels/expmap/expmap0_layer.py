@@ -1,6 +1,6 @@
 import torch
-from hypll.kernels.expmap0_fwd_kernel import expmap0_fwd_triton
-from hypll.kernels.expmap0_bwd_kernel import expmap0_bwd_triton
+from hypll.kernels.expmap.expmap0_fwd_kernel import expmap0_fwd_triton
+from hypll.kernels.expmap.expmap0_bwd_kernel import expmap0_bwd_triton
 
 
 class FastExpmap0(torch.autograd.Function):

@@ -1,7 +1,7 @@
 import torch
-from hypll.kernels.expmap0_bwd_kernel import expmap0_bwd_triton
-from hypll.kernels.logmap0_bwd_kernel import logmap0_bwd_triton
-from hypll.kernels.tangent_space_op_fwd_kernel import tangent_space_op_fwd_triton
+from hypll.kernels.expmap.expmap0_bwd_kernel import expmap0_bwd_triton
+from hypll.kernels.logmap.logmap0_bwd_kernel import logmap0_bwd_triton
+from hypll.kernels.tangent_space_ops.tangent_space_op_fwd_kernel import tangent_space_op_fwd_triton
 
 
 class FastTangentSpaceOp(torch.autograd.Function):

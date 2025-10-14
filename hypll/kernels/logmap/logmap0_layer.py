@@ -1,6 +1,6 @@
 import torch
-from hypll.kernels.logmap0_fwd_kernel import logmap0_fwd_triton
-from hypll.kernels.logmap0_bwd_kernel import logmap0_bwd_triton
+from hypll.kernels.logmap.logmap0_fwd_kernel import logmap0_fwd_triton
+from hypll.kernels.logmap.logmap0_bwd_kernel import logmap0_bwd_triton
 
 
 class FastLogmap0(torch.autograd.Function):

@@ -1,6 +1,6 @@
 import torch
-from hypll.kernels.fc_fwd_kernel import poincare_fc_project_fwd_triton
-from hypll.kernels.fc_bwd_kernel import poincare_fc_bwd_triton
+from hypll.kernels.fc.fc_fwd_kernel import poincare_fc_project_fwd_triton
+from hypll.kernels.fc.fc_bwd_kernel import poincare_fc_bwd_triton
 
 
 class FastPoincareFC(torch.autograd.Function):

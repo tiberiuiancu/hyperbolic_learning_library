@@ -2,7 +2,7 @@ import torch
 import triton
 import triton.language as tl
 
-from hypll.kernels.fc_fwd_kernel import single_block_fwd
+from hypll.kernels.fc.fc_fwd_kernel import single_block_fwd
 from hypll.utils.memory import gpu_memory_pool
 
 
