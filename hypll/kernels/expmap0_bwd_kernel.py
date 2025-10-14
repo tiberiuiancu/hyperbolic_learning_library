@@ -19,7 +19,7 @@ def get_autotune_configs():
 
 
 @triton.autotune(configs=get_autotune_configs(), key=["B", "M"])
-@triton.jit(do_not_specialize=range(9))
+@triton.jit(do_not_specialize=range(9), do_not_specialize_on_alignment=range(12))
 def _expmap0_bwd_kernel(
     dout_ptr: "*fp32",
     v_ptr: "*fp32",
