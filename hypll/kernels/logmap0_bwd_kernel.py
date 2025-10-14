@@ -30,7 +30,7 @@ def _logmap0_bwd_fused_kernel(
     dout_stride_b,  # stride for leading dim of dout
     dy_stride_b,  # stride for leading dim of dy
     B,
-    M,  # sizes
+    M,
     ACTIVATION: tl.constexpr,
     BLOCK_M: tl.constexpr,
 ):
