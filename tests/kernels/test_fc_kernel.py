@@ -82,7 +82,7 @@ def test_bwd(bias_flag: bool):
         atol=ATOL,
         rtol=RTOL,
         nondet_tol=NONDET_TOL,
-    ), "Gradcheck failed for Poincare FC layer"
+    ), "Gradcheck failed"
 
 
 @requires_cuda

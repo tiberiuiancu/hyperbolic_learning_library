@@ -44,4 +44,4 @@ def test_bwd():
         atol=ATOL,
         rtol=RTOL,
         nondet_tol=NONDET_TOL,
-    ), "Gradcheck failed for Poincare FC layer"
+    ), "Gradcheck failed"

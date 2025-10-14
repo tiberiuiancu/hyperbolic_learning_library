@@ -96,7 +96,7 @@ def logmap0_bwd_triton(
     B, M = y.shape
     dy = torch.empty_like(y)
 
-    grid = lambda meta: (B,)
+    grid = (B,)
     _logmap0_bwd_fused_kernel[grid](
         dout,
         y,
