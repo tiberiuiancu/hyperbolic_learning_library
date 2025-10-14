@@ -375,12 +375,12 @@ class PoincareBall(Manifold):
             man_dim = manifold_tensors[0].man_dim
             return ManifoldTensor(data=cat, manifold=self, man_dim=man_dim)
 
-    def op_in_tangent_space(self, op: Callable, input: ManifoldTensor) -> ManifoldTensor:
+    def op_in_tangent_space(self, op: Callable, inputs: ManifoldTensor) -> ManifoldTensor:
         if self.use_triton_backend and op == torch.nn.functional.relu:
-            dim = input.man_dim
-            input.tensor = FastTangentSpaceOp.apply(input.tensor, self.c(), dim, "relu")
-            return input
+            dim = inputs.man_dim
+            inputs.tensor = FastTangentSpaceOp.apply(inputs.tensor, self.c(), dim, "relu")
+            return inputs
         else:
-            input = self.logmap(x=None, y=input)
-            input.tensor = op(input.tensor)
-            return self.expmap(input)
+            inputs = self.logmap(x=None, y=inputs)
+            inputs.tensor = op(inputs.tensor)
+            return self.expmap(inputs)
