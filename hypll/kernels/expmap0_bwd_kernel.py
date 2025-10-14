@@ -23,56 +23,81 @@ def get_autotune_configs():
 def _expmap0_bwd_kernel(
     dout_ptr,
     v_ptr,
-    dout_v_sum_ptr,
     vn_ptr,
     cs,
     maxnorm,
     dv_ptr,
-    v_stride_b,
-    dout_stride_b,
-    dv_stride_b,
-    B,
-    M,
+    v_stride_b: tl.constexpr,
+    dout_stride_b: tl.constexpr,
+    dv_stride_b: tl.constexpr,
+    B: tl.constexpr,
+    M: tl.constexpr,
     BLOCK_M: tl.constexpr,
 ):
+    # Each program handles one batch item
     pid_b = tl.program_id(0)
-    pid_m = tl.program_id(1)
 
-    offs_m = tl.arange(0, BLOCK_M) + pid_m * BLOCK_M
-    mask_m = offs_m < M
+    # Batch pointers
+    v_row_ptr = v_ptr + pid_b * v_stride_b
+    dout_row_ptr = dout_ptr + pid_b * dout_stride_b
+    dv_row_ptr = dv_ptr + pid_b * dv_stride_b
 
-    v_ptr += v_stride_b * pid_b
-    dout_ptr += dout_stride_b * pid_b
-    dv_ptr += dv_stride_b * pid_b
-
-    v = tl.load(v_ptr + offs_m, mask=mask_m, other=0.0)
-    dout = tl.load(dout_ptr + offs_m, mask=mask_m, other=0.0)
-    dout_v_sum = tl.load(dout_v_sum_ptr + pid_b)
+    # Load per-batch scalars
     vn = tl.load(vn_ptr + pid_b)
-    vncs = tl.where(vn < 1e-15, 1e-15, vn) * cs
+    vn_safe = tl.where(vn < 1e-15, 1e-15, vn)
+    vncs = vn_safe * cs
 
-    tanh_vncs = tanh(vncs)
-    term1 = tanh_vncs / vncs * dout
-    dtanh = tl.where(tanh_vncs > maxnorm, 0, vncs * sech_squared(vncs))
-    term2 = tl.where(vn < 1e-15, 0, cs / vn * (dtanh - tanh_vncs) / (vncs * vncs) * dout_v_sum * v)
-    dv = term1 + term2
+    # Pass 1: compute sum(dout * v)
+    acc = tl.zeros((), dtype=tl.float32)
+    for start in tl.range(0, M, BLOCK_M):
+        offs = start + tl.arange(0, BLOCK_M)
+        mask = offs < M
+        v_blk = tl.load(v_row_ptr + offs, mask=mask, other=0.0)
+        dout_blk = tl.load(dout_row_ptr + offs, mask=mask, other=0.0)
+        prod = (v_blk * dout_blk).to(tl.float32)
+        acc += tl.sum(prod, axis=0)
+    dout_v_sum = acc  # scalar
 
-    tl.store(dv_ptr + offs_m, dv, mask=mask_m)
+    t_vncs = tanh(vncs)
+    dtanh = tl.where(t_vncs > maxnorm, 0.0, vncs * sech_squared(vncs))  # scalar
+
+    # Pass 2: compute dv
+    for start in tl.range(0, M, BLOCK_M):
+        offs = start + tl.arange(0, BLOCK_M)
+        mask = offs < M
+
+        v_blk = tl.load(v_row_ptr + offs, mask=mask, other=0.0)
+        dout_blk = tl.load(dout_row_ptr + offs, mask=mask, other=0.0)
+
+        term1 = (t_vncs / vncs) * dout_blk
+        # avoid division by zero handled via vn_safe above
+        term2_num = (dtanh - t_vncs) * dout_v_sum * v_blk
+        term2_den = (vncs * vncs) * vn_safe
+        term2 = tl.where(vn < 1e-15, 0.0, (cs / vn_safe) * (term2_num / term2_den))
+
+        dv_blk = term1 + term2
+        tl.store(dv_row_ptr + offs, dv_blk, mask=mask)
 
 
 def expmap0_bwd_triton(
     dout: torch.Tensor, v: torch.Tensor, vn: torch.Tensor, cs: float, maxnorm: float
 ) -> torch.Tensor:
-    assert v.ndim == 2
+    assert v.ndim == 2 and dout.shape == v.shape and vn.ndim == 1 and vn.shape[0] == v.shape[0]
     B, M = v.shape
+    dv = torch.empty_like(v)
 
-    dout_v_sum = (dout * v).sum(dim=-1)
-    assert dout_v_sum.shape[0] == v.shape[0]
-    dv = torch.zeros_like(v)
-
-    grid = lambda meta: (B, triton.cdiv(M, meta["BLOCK_M"]))
+    grid = (B,)
     _expmap0_bwd_kernel[grid](
-        dout, v, dout_v_sum, vn, cs, maxnorm, dv, v.stride(0), dout.stride(0), dv.stride(0), B, M
+        dout,
+        v,
+        vn,
+        cs,
+        maxnorm,
+        dv,
+        v.stride(0),
+        dout.stride(0),
+        dv.stride(0),
+        B,
+        M,
     )
-
     return dv

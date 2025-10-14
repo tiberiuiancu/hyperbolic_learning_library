@@ -34,22 +34,34 @@ def _logmap0_fwd_kernel(
 ):
     """each program computes a block_m slice in one row"""
     pid_b = tl.program_id(0)
-    pid_m = tl.program_id(1)
-
-    offs_m = tl.arange(0, BLOCK_M) + pid_m * BLOCK_M
-    mask_m = offs_m < M
-
     y_ptr += y_stride_b * pid_b
     out_ptr += out_stride_b * pid_b
 
-    y = tl.load(y_ptr + offs_m, mask=mask_m, other=0.0)
-    yn = tl.load(yn_ptr + pid_b)
+    # first pass: calculate yn
+    yn = 0.0
+    for m in tl.range(0, M, BLOCK_M):
+        offs_m = m + tl.arange(0, BLOCK_M)
+        mask_m = offs_m < M
+
+        y = tl.load(y_ptr + offs_m, mask=mask_m, other=0.0)
+        yn += tl.sum(y * y)
+
+    yn = tl.sqrt(yn)
     yncs = tl.where(yn < 1e-15, 1e-15, yn) * cs
 
-    out = atanh(yncs) * y / yncs
-    if ACTIVATION == "relu":
-        out = tl.where(out < 0.0, 0.0, out)
-    tl.store(out_ptr + offs_m, out, mask=mask_m)
+    # second pass: calculate out
+    for m in tl.range(0, M, BLOCK_M):
+        offs_m = m + tl.arange(0, BLOCK_M)
+        mask_m = offs_m < M
+
+        y = tl.load(y_ptr + offs_m, mask=mask_m, other=0.0)
+        out = atanh(yncs) * y / yncs
+        if ACTIVATION == "relu":
+            out = tl.where(out < 0.0, 0.0, out)
+        tl.store(out_ptr + offs_m, out, mask=mask_m)
+
+    # save for bwd pass
+    tl.store(yn_ptr + pid_b, yn)
 
 
 def logmap0_fwd_triton(
@@ -58,7 +70,7 @@ def logmap0_fwd_triton(
     assert y.ndim == 2  # assume y [B, M]
     B, M = y.shape
 
-    yn = y.norm(dim=-1, keepdim=True)
+    yn = torch.empty((B,), device="cuda", dtype=y.dtype)
     out = torch.empty_like(y)
 
     cs = c**0.5

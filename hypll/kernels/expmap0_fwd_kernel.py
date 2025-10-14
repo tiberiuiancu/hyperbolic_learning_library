@@ -25,37 +25,49 @@ def _expmap0_fwd_kernel(
 ):
     """each program computes a block_m slice in one row"""
     pid_b = tl.program_id(0)
-    pid_m = tl.program_id(1)
-
-    offs_m = tl.arange(0, BLOCK_M) + pid_m * BLOCK_M
-    mask_m = offs_m < M
 
     v_ptr += v_stride_b * pid_b
     out_ptr += out_stride_b * pid_b
 
-    v = tl.load(v_ptr + offs_m, mask=mask_m, other=0.0)
-    vn = tl.load(vn_ptr + pid_b)
+    # first pass: calculate vn
+    vn = 0.0
+    for m in tl.range(0, M, BLOCK_M):
+        offs_m = m + tl.arange(0, BLOCK_M)
+        mask_m = offs_m < M
+
+        v = tl.load(v_ptr + offs_m, mask=mask_m, other=0.0)
+        vn += tl.sum(v * v)
+    vn = tl.sqrt(vn)
     vncs = tl.where(vn < 1e-15, 1e-15, vn) * cs
     tanh_vncs = tanh(vncs)
     if tanh_vncs > maxnorm:
         tanh_vncs = maxnorm
 
-    out = tanh_vncs * v / vncs
-    tl.store(out_ptr + offs_m, out, mask=mask_m)
+    # second pass: calculate out
+    for m in tl.range(0, M, BLOCK_M):
+        offs_m = m + tl.arange(0, BLOCK_M)
+        mask_m = offs_m < M
+
+        v = tl.load(v_ptr + offs_m, mask=mask_m, other=0.0)
+        out = tanh_vncs * v / vncs
+        tl.store(out_ptr + offs_m, out, mask=mask_m)
+
+    # save vn for bwd pass
+    tl.store(vn_ptr + pid_b, vn)
 
 
 def expmap0_fwd_triton(v: torch.Tensor, c: float, return_cache: bool = False):
     assert v.ndim == 2  # assume y [B, M]
     B, M = v.shape
 
-    vn = v.norm(dim=-1, keepdim=True)
+    vn = torch.empty((B,), device="cuda", dtype=v.dtype)
     out = torch.empty_like(v)
     cs = c**0.5
 
     eps = 4e-3 if v.dtype == torch.float32 else 1e-5
     maxnorm = (1 - eps) / ((c + 1e-15) ** 0.5) if c > 0.0 else 1e15
 
-    grid = lambda meta: (B, triton.cdiv(M, meta["BLOCK_M"]))
+    grid = (B,)
     _expmap0_fwd_kernel[grid](v, vn, cs, maxnorm, out, v.stride(0), out.stride(0), B, M)
     cache = (vn, cs, maxnorm)
     return (out, cache) if return_cache else out
