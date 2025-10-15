@@ -192,12 +192,13 @@ def poincare_fc_bwd_triton(
     cs = cs if isinstance(cs, float) else cs.item()
 
     # preallocate GPU buffers
-    T1 = gpu_memory_pool.get_shared("T1", XZ.shape, torch.float32)
-    T1_num = gpu_memory_pool.get_shared("T1_num", lam.shape, torch.float32)
-    T4_sum = gpu_memory_pool.get_shared("T4_sum", lam.shape, torch.float32)
-    T5 = gpu_memory_pool.get_shared("T5", XZ.shape, torch.float32)
-    T7_sum = gpu_memory_pool.get_shared("T7_sum", b.shape, torch.float32)
-    T8 = gpu_memory_pool.get_shared("T7_sum", XZ.shape, torch.float32)
+    dtype = dout.dtype
+    T1 = gpu_memory_pool.get_shared("T1", XZ.shape, dtype)
+    T1_num = gpu_memory_pool.get_shared("T1_num", lam.shape, dtype)
+    T4_sum = gpu_memory_pool.get_shared("T4_sum", lam.shape, dtype)
+    T5 = gpu_memory_pool.get_shared("T5", XZ.shape, dtype)
+    T7_sum = gpu_memory_pool.get_shared("T7_sum", b.shape, dtype)
+    T8 = gpu_memory_pool.get_shared("T7_sum", XZ.shape, dtype)
 
     T1_num.zero_()
     T4_sum.zero_()

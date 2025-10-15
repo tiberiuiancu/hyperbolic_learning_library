@@ -210,10 +210,12 @@ def poincare_fc_project_fwd_triton(
     xz = x @ z  # [B, M]
 
     # Allocate output tensors and caches
-    num = torch.empty((B, M), dtype=torch.float32, device="cuda")
-    den = torch.empty((B,), dtype=torch.float32, device="cuda")
-    yn = torch.empty((B,), dtype=torch.float32, device="cuda")
-    lam = torch.empty((B,), dtype=torch.float32, device="cuda")
+    dtype = x.dtype
+    device = x.device
+    num = torch.empty((B, M), dtype=dtype, device=device)
+    den = torch.empty((B,), dtype=dtype, device=device)
+    yn = torch.empty((B,), dtype=dtype, device=device)
+    lam = torch.empty((B,), dtype=dtype, device=device)
 
     # Prepare bias
     if r is None:
@@ -242,7 +244,10 @@ def poincare_fc_project_fwd_triton(
     )
 
     if eps < 0:
-        eps = 4e-3
+        if y.dtype == torch.float32:
+            eps = 4e-3
+        else:
+            eps = 1e-5
 
     max_norm = 1e15
     if c_val > 0:
@@ -283,7 +288,7 @@ def poincare_fc_fwd_project_ref(
 ) -> torch.Tensor:
     x = x.movedim(dim, -1)  # features last
     if bias is None:
-        bias = torch.zeros(z.shape[1], dtype=torch.float32, device="cuda")
+        bias = torch.zeros(z.shape[1], dtype=x.dtype, device=x.device)
 
     cs = c.sqrt()
     lam = 2 / (1 - c * x.pow(2).sum(-1, keepdim=True))
