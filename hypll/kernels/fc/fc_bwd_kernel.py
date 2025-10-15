@@ -1,8 +1,10 @@
+from typing import Tuple
 import torch
 import triton
 import triton.language as tl
 
 from hypll.kernels.fc.fc_fwd_kernel import single_block_fwd
+from hypll.kernels.utils import Tensor1D, Tensor2D
 from hypll.utils.memory import gpu_memory_pool
 
 
@@ -165,25 +167,25 @@ def _dL_dY_kernel(
 
 
 def poincare_fc_bwd_triton(
-    dout,
-    Y,
-    X,
-    Z,
-    XZ,
-    zn,
-    b,
-    lam,
-    num,
-    den,
-    yn,
-    max_norm,
-    c,
-    cs,
-):
-    # TODO: sanity checks
+    dout: Tensor2D,
+    Y: Tensor2D,
+    X: Tensor2D,
+    Z: Tensor2D,
+    XZ: Tensor2D,
+    zn: Tensor1D,
+    b: Tensor1D,
+    lam: Tensor1D,
+    num: Tensor2D,
+    den: Tensor1D,
+    yn: Tensor1D,
+    max_norm: float,
+    c: float,
+    cs: float,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
+    assert Y.shape == dout.shape
+
     B, K = X.shape
     K2, M = Z.shape
-
     assert K == K2
 
     c = c if isinstance(c, float) else c.item()

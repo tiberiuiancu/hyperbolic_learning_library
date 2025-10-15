@@ -1,7 +1,7 @@
 import torch
 import triton.language as tl
 import triton
-from hypll.kernels.utils import tanh
+from hypll.kernels.utils import Tensor2D, tanh, validate_tensors
 
 
 def get_autotune_configs():
@@ -23,7 +23,7 @@ def get_autotune_configs():
 def _expmap0_fwd_kernel(
     v_ptr, vn_ptr, cs, maxnorm, out_ptr, v_stride_b, out_stride_b, B, M, BLOCK_M: tl.constexpr
 ):
-    """each program computes a block_m slice in one row"""
+    """each program computes one row of the output"""
     pid_b = tl.program_id(0)
 
     v_ptr += v_stride_b * pid_b
@@ -56,9 +56,8 @@ def _expmap0_fwd_kernel(
     tl.store(vn_ptr + pid_b, vn)
 
 
-def expmap0_fwd_triton(v: torch.Tensor, c: float, return_cache: bool = False):
-    assert v.ndim == 2  # assume y [B, M]
-    assert v.is_contiguous()
+@validate_tensors
+def expmap0_fwd_triton(v: Tensor2D, c: float, return_cache: bool = False):
     B, M = v.shape
 
     vn = torch.empty((B,), device="cuda", dtype=v.dtype)

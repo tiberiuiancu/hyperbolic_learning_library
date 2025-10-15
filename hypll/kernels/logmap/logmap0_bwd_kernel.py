@@ -1,7 +1,7 @@
 import torch
 import triton
 import triton.language as tl
-from hypll.kernels.utils import atanh
+from hypll.kernels.utils import Tensor1D, Tensor2D, atanh, validate_tensors
 
 
 def get_autotune_configs():
@@ -89,8 +89,9 @@ def _logmap0_bwd_fused_kernel(
         tl.store(dy_row_ptr + offs_m, dy, mask=mask_m)
 
 
+@validate_tensors
 def logmap0_bwd_triton(
-    dout: torch.Tensor, y: torch.Tensor, yn: torch.Tensor, cs: float, activation: str = "none"
+    dout: Tensor2D, y: Tensor2D, yn: Tensor1D, cs: float, activation: str = "none"
 ) -> torch.Tensor:
     assert y.ndim == 2 and dout.shape == y.shape
     B, M = y.shape

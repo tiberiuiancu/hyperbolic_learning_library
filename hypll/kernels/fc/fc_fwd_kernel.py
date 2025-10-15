@@ -5,6 +5,8 @@ import torch
 import triton
 import triton.language as tl
 
+from hypll.kernels.utils import Tensor1D, Tensor2D, validate_tensors
+
 
 def get_autotune_configs(device=None):
     if device is None:
@@ -189,19 +191,10 @@ def _project_kernel(
     tl.store(y_ptr + offs_m, y, mask=mask_m)
 
 
+@validate_tensors
 def poincare_fc_project_fwd_triton(
-    x, z, r=None, c=1.0, eps: float = -1, return_cache: bool = False
+    x: Tensor2D, z: Tensor2D, r: Tensor1D = None, c=1.0, eps: float = -1, return_cache: bool = False
 ):
-    """
-    Host function to call the Triton Poincare fully connected kernel.
-    Args:
-        x: [B, K] input tensor (fp32, CUDA)
-        z: [K, M] weight tensor (fp32, CUDA)
-        r: [M] bias tensor or None (fp32, CUDA)
-        c: curvature (tensor or float)
-    Returns:
-        Tuple: (output [B, M], numerator [B, M], denominator [B], v [B, M], inner [B, M], lam [B], twocsr [M])
-    """
     assert x.is_cuda and z.is_cuda, "Input tensors must be on CUDA"
     B, K = x.shape
     K2, M = z.shape

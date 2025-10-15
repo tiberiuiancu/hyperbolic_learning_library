@@ -1,7 +1,9 @@
+import inspect
 from typing import Iterable
 import torch
 import triton
 import triton.language as tl
+from typing import Annotated
 
 
 @triton.jit
@@ -56,3 +58,34 @@ def dim_shift_output(y: torch.Tensor, dim: int, shape: Iterable) -> torch.Tensor
         y = y.movedim(-1, dim)
 
     return y
+
+
+class TensorSpec:
+    def __init__(self, ndim=None):
+        self.ndim = ndim
+
+
+Tensor1D = Annotated[torch.Tensor, TensorSpec(ndim=1)]
+Tensor2D = Annotated[torch.Tensor, TensorSpec(ndim=2)]
+
+
+def validate_tensors(func):
+    sig = inspect.signature(func)
+    specs = {
+        name: p.annotation.__metadata__[0]
+        for name, p in sig.parameters.items()
+        if hasattr(p.annotation, "__metadata__")
+    }
+
+    def wrapper(*args, **kwargs):
+        bound = sig.bind(*args, **kwargs)
+        bound.apply_defaults()
+        for name, x in bound.arguments.items():
+            spec = specs.get(name)
+            if isinstance(spec, TensorSpec) and isinstance(x, torch.Tensor):
+                assert x.ndim == spec.ndim, f"{name} must have {spec.ndim} dims, got {x.ndim}"
+                assert x.is_cuda, f"{name} must be on the GPU"
+                assert x.is_contiguous(), f"{name} must be contiguous"
+        return func(*args, **kwargs)
+
+    return wrapper

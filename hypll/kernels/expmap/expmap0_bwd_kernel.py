@@ -1,7 +1,7 @@
 import torch
 import triton
 import triton.language as tl
-from hypll.kernels.utils import tanh, sech_squared
+from hypll.kernels.utils import Tensor1D, Tensor2D, tanh, sech_squared, validate_tensors
 
 
 def get_autotune_configs():
@@ -34,7 +34,7 @@ def _expmap0_bwd_kernel(
     M: tl.constexpr,
     BLOCK_M: tl.constexpr,
 ):
-    # Each program handles one batch item
+    """Each program computes one row of the output"""
     pid_b = tl.program_id(0)
 
     # Batch pointers
@@ -79,10 +79,12 @@ def _expmap0_bwd_kernel(
         tl.store(dv_row_ptr + offs, dv_blk, mask=mask)
 
 
+@validate_tensors
 def expmap0_bwd_triton(
-    dout: torch.Tensor, v: torch.Tensor, vn: torch.Tensor, cs: float, maxnorm: float
+    dout: Tensor2D, v: Tensor2D, vn: Tensor1D, cs: float, maxnorm: float
 ) -> torch.Tensor:
-    assert v.ndim == 2 and dout.shape == v.shape and vn.ndim == 1 and vn.shape[0] == v.shape[0]
+    assert dout.shape == v.shape
+
     B, M = v.shape
     dv = torch.empty_like(v)
 
