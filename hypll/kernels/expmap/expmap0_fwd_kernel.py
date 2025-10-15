@@ -58,6 +58,7 @@ def _expmap0_fwd_kernel(
 
 def expmap0_fwd_triton(v: torch.Tensor, c: float, return_cache: bool = False):
     assert v.ndim == 2  # assume y [B, M]
+    assert v.is_contiguous()
     B, M = v.shape
 
     vn = torch.empty((B,), device="cuda", dtype=v.dtype)
