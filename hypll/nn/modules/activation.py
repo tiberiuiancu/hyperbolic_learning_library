@@ -15,5 +15,5 @@ class HReLU(Module):
         check_if_manifolds_match(layer=self, input=inputs)
         return inputs.manifold.op_in_tangent_space(
             op=relu,
-            input=inputs,
+            inputs=inputs,
         )
