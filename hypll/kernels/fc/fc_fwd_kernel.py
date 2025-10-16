@@ -244,7 +244,7 @@ def poincare_fc_project_fwd_triton(
     )
 
     if eps < 0:
-        if y.dtype == torch.float32:
+        if x.dtype == torch.float32:
             eps = 4e-3
         else:
             eps = 1e-5
