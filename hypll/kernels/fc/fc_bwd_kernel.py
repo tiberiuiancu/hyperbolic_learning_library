@@ -4,7 +4,7 @@ import triton
 import triton.language as tl
 
 from hypll.kernels.fc.fc_fwd_kernel import single_block_fwd
-from hypll.kernels.utils import Tensor1D, Tensor2D
+from hypll.kernels.utils import Tensor1D, Tensor2D, validate_tensors
 from hypll.utils.memory import gpu_memory_pool
 
 
@@ -25,147 +25,144 @@ def get_autotune_configs():
 @triton.autotune(
     configs=get_autotune_configs(),
     key=["B", "M"],
-    reset_to_zero=["T4_sum_ptr", "T7_sum_ptr", "dr_ptr"],
+    reset_to_zero=["T7_sum_ptr", "dr_ptr"],  # we atomically add to these
 )
 @triton.jit
-def _poincare_fc_bwd_kernel(
-    ##### forward pass cache
-    T1_ptr,
-    T1_num_ptr,
-    XZ_ptr,
-    zn_ptr,
-    b_ptr,
-    lam_ptr,
-    den_ptr,
-    c,
-    cs,
-    ##### outputs
-    T5_ptr,
-    T8_ptr,
-    T7_sum_ptr,
-    T4_sum_ptr,
-    dr_ptr,
-    ##### strides
-    T1_stride_b,
-    XZ_stride_b,
-    T5_stride_b,
-    T8_stride_b,
-    ##### dimensions
-    M,
-    B,
-    BLOCK_M: tl.constexpr,
-):
-    # calculate which block we're working on
-    pid_b = tl.program_id(0)
-    pid_m = tl.program_id(1)
-    offs_m = tl.arange(0, BLOCK_M) + pid_m * BLOCK_M
-    mask_m = offs_m < M
-
-    # offset pointers to correct row
-    XZ_ptr += pid_b * XZ_stride_b
-    T1_ptr += pid_b * T1_stride_b
-    T5_ptr += pid_b * T5_stride_b
-    T8_ptr += pid_b * T8_stride_b
-
-    # perform scalar reads
-    den = tl.load(den_ptr + pid_b)
-    lam = tl.load(lam_ptr + pid_b)
-    T1_num = tl.load(T1_num_ptr + pid_b)
-
-    # perform BLOCK_M reads
-    T1 = tl.load(T1_ptr + offs_m, mask=mask_m, other=0.0)
-    XZ = tl.load(XZ_ptr + offs_m, mask=mask_m, other=0.0)
-    zn = tl.load(zn_ptr + offs_m, mask=mask_m, other=1.0)
-    b = tl.load(b_ptr + offs_m, mask=mask_m, other=0.0)
-
-    sq_p2_1, log_p_sq, eb_sum, eb_dif, ed_sum, num = single_block_fwd(b, lam, zn, XZ, cs)
-
-    den1 = den * (den - 1)
-    znc = tl.clamp(zn, 1e-15, 1e30)
-
-    # T2
-    T2 = (T1 - c * num / den1 * T1_num) / den
-
-    # T3
-    ed_div = ed_sum / (2 * cs)
-    T3 = T2 * ed_div * znc / sq_p2_1
-
-    # T4: multiply by lambda after summation to save compute
-    eb_div = eb_sum / znc
-    T4 = T3 * (cs * XZ * eb_div - eb_dif)
-    T4_sum = tl.sum(T4 * mask_m.to(tl.float32)) * lam * lam * c
-
-    # T5
-    T5 = cs * lam * T3 * eb_div
-
-    # write outputs for dx
-    tl.atomic_add(T4_sum_ptr + pid_b, T4_sum)
-    tl.store(T5_ptr + offs_m, T5, mask=mask_m)
-
-    # calculate outputs for dz
-    T6 = T1 * (1 - c * num * num / den1) * ed_div / den
-    _tmp = eb_sum * cs * lam / sq_p2_1
-    T7 = tl.where(zn > 1e-15, T6 * (2 * log_p_sq - _tmp * XZ / znc) / znc, 0)
-    T8 = T6 * _tmp
-
-    # write output for dz
-    tl.store(T8_ptr + offs_m, T8, mask=mask_m)
-    tl.atomic_add(T7_sum_ptr + offs_m, T7, mask=mask_m)
-
-    # calculate outputs for dr
-    T9 = T6 * cs / znc / sq_p2_1 * (eb_dif * c * lam / znc - eb_sum * (lam - 1))
-    tl.atomic_add(dr_ptr + offs_m, T9, mask=mask_m)
-
-
-@triton.autotune(configs=get_autotune_configs(), key=["B", "M"], reset_to_zero=["T1_num_ptr"])
-@triton.jit
-def _dL_dY_kernel(
+def _poincare_fc_bwd_kernel(  # 1D grid over B
     # inputs
-    dout_ptr,
-    Y_ptr,
-    dout_y_sum_ptr,
-    num_ptr,
-    yn_ptr,
-    max_norm,
+    dout_ptr,  # [B, M]
+    Y_ptr,  # [B, M]   (unprojected y)
+    num_ptr,  # [B, M]   (forward 'num' cache) — used only for T1_num
+    yn_ptr,  # [B]
+    XZ_ptr,  # [B, M]
+    zn_ptr,  # [M]
+    b_ptr,  # [M]
+    lam_ptr,  # [B]
+    den_ptr,  # [B]
     # outputs
-    T1_ptr,
-    T1_num_ptr,
+    T5_ptr,  # [B, M]   (written; used as TEMP in pass 2, final T5 in pass 3)
+    T8_ptr,  # [B, M]
+    T7_sum_ptr,  # [M]      (atomic add over B)
+    T4_sum_ptr,  # [B]
+    dr_ptr,  # [M]      (atomic add over B)
+    # scalars (runtime, NOT constexpr)
+    max_norm,  # fp32
+    c,  # fp32
+    cs,  # fp32
     # strides
     dout_stride_b,
     Y_stride_b,
     num_stride_b,
-    T1_stride_b,
-    # constants
-    B,
+    XZ_stride_b,
+    T5_stride_b,
+    T8_stride_b,
+    # dims
     M,
+    B,
     BLOCK_M: tl.constexpr,
 ):
-    pid_b = tl.program_id(0)
-    pid_m = tl.program_id(1)
+    b_id = tl.program_id(0)
 
-    dout_ptr += dout_stride_b * pid_b
-    Y_ptr += Y_stride_b * pid_b
-    num_ptr += num_stride_b * pid_b
-    T1_ptr += T1_stride_b * pid_b
+    # row offsets
+    dout_row = dout_ptr + b_id * dout_stride_b
+    Y_row = Y_ptr + b_id * Y_stride_b
+    num_row = num_ptr + b_id * num_stride_b
+    XZ_row = XZ_ptr + b_id * XZ_stride_b
+    T5_row = T5_ptr + b_id * T5_stride_b
+    T8_row = T8_ptr + b_id * T8_stride_b
 
-    offs_m = tl.arange(0, BLOCK_M) + BLOCK_M * pid_m
-    mask_m = offs_m < M
+    lam = tl.load(lam_ptr + b_id)
+    den = tl.load(den_ptr + b_id)
+    yn = tl.load(yn_ptr + b_id)
+    den1 = den * (den - 1)
 
-    dout = tl.load(dout_ptr + offs_m, mask=mask_m, other=0.0)
-    num = tl.load(num_ptr + offs_m, mask=mask_m, other=0.0)
-    yn = tl.load(yn_ptr + pid_b)
+    # -------------------------
+    # Pass 1: dout_y_sum[b]
+    # -------------------------
+    dout_y_sum = 0.0
+    for m0 in range(0, M, BLOCK_M):
+        offs = tl.arange(0, BLOCK_M) + m0
+        mask = offs < M
+        dout = tl.load(dout_row + offs, mask=mask, other=0.0)
+        Y = tl.load(Y_row + offs, mask=mask, other=0.0)
+        dout_y_sum += tl.sum((dout * Y * mask.to(dout.dtype)).to(tl.float32))
 
-    if yn < max_norm:
-        T1 = dout
-    else:
-        dout_y_sum = tl.load(dout_y_sum_ptr + pid_b)
-        Y = tl.load(Y_ptr + offs_m, mask=mask_m, other=0.0)
-        T1 = max_norm * (dout - Y * dout_y_sum / (yn * yn)) / yn
+    # -------------------------
+    # Pass 2: T1_num[b] and stash T1 in T5_row (as temp)
+    #   T1_num = sum_m num[m] * T1[m]
+    # -------------------------
+    T1_num_acc = 0.0
+    for m0 in range(0, M, BLOCK_M):
+        offs = tl.arange(0, BLOCK_M) + m0
+        mask = offs < M
+        dout = tl.load(dout_row + offs, mask=mask, other=0.0)
+        Y = tl.load(Y_row + offs, mask=mask, other=0.0)
+        num = tl.load(num_row + offs, mask=mask, other=0.0)
 
-    tl.atomic_add(T1_num_ptr + pid_b, tl.sum(num * T1))
-    tl.store(T1_ptr + offs_m, T1, mask=mask_m)
+        T1 = tl.where(
+            yn < max_norm,
+            dout,
+            max_norm * (dout - Y * (dout_y_sum / (yn * yn))) / yn,
+        )
+        # stash T1 for reuse
+        tl.store(T5_row + offs, T1, mask=mask)
+
+        T1_num_acc += tl.sum((num * T1 * mask.to(T1.dtype)).to(tl.float32))
+
+    T1_num = T1_num_acc
+
+    # -------------------------
+    # Pass 3: outputs + reductions
+    # -------------------------
+    T4_sum_acc = 0.0
+    for m0 in range(0, M, BLOCK_M):
+        offs = tl.arange(0, BLOCK_M) + m0
+        mask = offs < M
+
+        # loads
+        XZ = tl.load(XZ_row + offs, mask=mask, other=0.0)
+        zn = tl.load(zn_ptr + offs, mask=mask, other=1.0)
+        b = tl.load(b_ptr + offs, mask=mask, other=0.0)
+        T1 = tl.load(T5_row + offs, mask=mask, other=0.0)  # previously stashed
+
+        # forward invariants
+        sq_p2_1, log_p_sq, eb_sum, eb_dif, ed_sum, num_f = single_block_fwd(b, lam, zn, XZ, cs)
+        znc = tl.clamp(zn, 1e-15, 1e30)
+
+        ed_div = ed_sum / (2 * cs)
+        eb_div = eb_sum / znc
+
+        # T2, T3
+        T2 = (T1 - c * num_f / den1 * T1_num) / den
+        T3 = T2 * ed_div * znc / sq_p2_1
+
+        # T4 and row reduction
+        T4 = T3 * (cs * XZ * eb_div - eb_dif)
+        T4_sum_acc += tl.sum((T4 * mask.to(T4.dtype)).to(tl.float32)) * lam * lam * c
+
+        # T5 -> write (overwrites temp)
+        T5 = cs * lam * T3 * eb_div
+        tl.store(T5_row + offs, T5, mask=mask)
+
+        # T6 / T7 / T8
+        T6 = T1 * (1 - c * num_f * num_f / den1) * ed_div / den
+        tmp = eb_sum * cs * lam / sq_p2_1
+
+        T7 = tl.where(zn > 1e-15, T6 * (2 * log_p_sq - tmp * XZ / znc) / znc, 0.0)
+        tl.atomic_add(T7_sum_ptr + offs, T7, mask=mask)
+
+        T8 = T6 * tmp
+        tl.store(T8_row + offs, T8, mask=mask)
+
+        # dr
+        T9 = T6 * cs / znc / sq_p2_1 * (eb_dif * c * lam / znc - eb_sum * (lam - 1))
+        tl.atomic_add(dr_ptr + offs, T9, mask=mask)
+
+    # per-row write
+    tl.store(T4_sum_ptr + b_id, T4_sum_acc)
 
 
+@validate_tensors
 def poincare_fc_bwd_triton(
     dout: Tensor2D,
     Y: Tensor2D,
@@ -181,78 +178,64 @@ def poincare_fc_bwd_triton(
     max_norm: float,
     c: float,
     cs: float,
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
+):
     assert Y.shape == dout.shape
-
     B, K = X.shape
     K2, M = Z.shape
     assert K == K2
+
+    device, dtype = dout.device, dout.dtype
+
+    # outputs / workspaces
 
     c = c if isinstance(c, float) else c.item()
     cs = cs if isinstance(cs, float) else cs.item()
 
     # preallocate GPU buffers
     dtype = dout.dtype
-    T1 = gpu_memory_pool.get_shared("T1", XZ.shape, dtype)
-    T1_num = gpu_memory_pool.get_shared("T1_num", lam.shape, dtype)
     T4_sum = gpu_memory_pool.get_shared("T4_sum", lam.shape, dtype)
     T5 = gpu_memory_pool.get_shared("T5", XZ.shape, dtype)
     T7_sum = gpu_memory_pool.get_shared("T7_sum", b.shape, dtype)
     T8 = gpu_memory_pool.get_shared("T7_sum", XZ.shape, dtype)
-
-    T1_num.zero_()
+    dr = torch.zeros_like(b)
     T4_sum.zero_()
     T7_sum.zero_()
 
-    dX = torch.empty_like(X)
-    dZ = torch.empty_like(Z)
-    dr = torch.empty_like(b)
-    dr.zero_()
-
-    # get dL_dY
-    dout_y_sum = (dout * Y).sum(1)
-    grid = lambda meta: (B, triton.cdiv(M, meta["BLOCK_M"]))
-    _dL_dY_kernel[grid](
+    # 1D launch over B
+    grid = (B,)
+    _poincare_fc_bwd_kernel[grid](
+        # inputs
         dout,
         Y,
-        dout_y_sum,
         num,
         yn,
-        max_norm,
-        T1,
-        T1_num,
-        dout.stride(0),
-        Y.stride(0),
-        num.stride(0),
-        T1.stride(0),
-        B,
-        M,
-    )
-
-    _poincare_fc_bwd_kernel[grid](
-        T1,
-        T1_num,
         XZ,
         zn,
         b,
         lam,
         den,
-        c,
-        cs,
+        # outputs
         T5,
         T8,
         T7_sum,
         T4_sum,
         dr,
-        T1.stride(0),
+        # consts
+        float(max_norm),
+        float(c),
+        float(cs),
+        # strides
+        dout.stride(0),
+        Y.stride(0),
+        num.stride(0),
         XZ.stride(0),
         T5.stride(0),
         T8.stride(0),
+        # dims
         M,
         B,
     )
 
-    # perform the matrix multiply and addition in one kernel call
     dX = torch.addmm(X * T4_sum[:, None], T5, Z.T)
     dZ = torch.addmm(Z * T7_sum[None, :], X.T, T8)
     return dX, dZ, dr
