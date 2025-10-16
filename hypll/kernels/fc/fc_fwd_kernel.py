@@ -75,36 +75,43 @@ def single_block_fwd(
     key=["K", "M"],
 )
 @triton.jit
-def _poincare_fc_fwd_kernel(
-    X_ptr,  # [B, K]   fp32
-    ZN_ptr,  # [M]      fp32 (‖z_k‖)
-    XZ_ptr,  # [B, M]   fp32 – X @ Z
-    B_ptr,  # [M]      fp32 or dummy when no bias; = 2 * cs * r
-    num_ptr,  # [B, M]   fp32 – output numerator
-    den_ptr,  # [B]   fp32 – output denominator
-    y_norm_ptr,  # [B] fp32 - output y norm
-    lam_ptr,  # [B]   fp32 – cache for lambda
-    c,  # fp32  (curvature)
-    cs,  # fp32  (sqrt(curvature))
+def _poincare_fc_fwd_kernel(  # fused: fwd + project
+    X_ptr,  # [B, K]
+    ZN_ptr,  # [M]
+    XZ_ptr,  # [B, M]
+    B_ptr,  # [M]
+    num_ptr,  # [B, M]  (kept for cache)
+    den_ptr,  # [B]
+    yn_ptr,  # [B]
+    y_ptr,  # [B, M]
+    py_ptr,  # [B, M]
+    lam_ptr,  # [B]
+    c,  # fp32
+    cs,  # fp32
+    max_norm,  # fp32
     K,
     M,
     stride_x_b,
     stride_xz_b,
     stride_num_b,
+    stride_y_b,
+    stride_py_b,
     BLOCK_K: tl.constexpr,
     BLOCK_M: tl.constexpr,
 ):
-    """Each program instance handles one output row (batch element)."""
-
     row = tl.program_id(0)
 
-    # offset pointers
+    # row offsets
     X_ptr += row * stride_x_b
-    num_ptr += row * stride_num_b
     XZ_ptr += row * stride_xz_b
+    num_ptr += row * stride_num_b
+    y_ptr += row * stride_y_b
+    py_ptr += row * stride_py_b
     lam_ptr += row
+    den_ptr += row
+    yn_ptr += row
 
-    # 1. compute lambda
+    # 1) lambda(x)
     offs_k = tl.arange(0, BLOCK_K)
     norm_x_sq = 0.0
     for _ in range(0, K, BLOCK_K):
@@ -112,10 +119,10 @@ def _poincare_fc_fwd_kernel(
         xk = tl.load(X_ptr + offs_k, mask=mask_k, other=0.0)
         norm_x_sq += tl.sum(xk * xk)
         offs_k += BLOCK_K
-    lam = 2.0 / (1.0 - c * norm_x_sq)  # shape [1]
+    lam = 2.0 / (1.0 - c * norm_x_sq)
     tl.store(lam_ptr, lam)
 
-    # compute numerator and accumulate denominator
+    # 2) compute num and accumulate denominator
     den_acc = 0.0
     for m in range(0, M, BLOCK_M):
         m_ids = tl.arange(0, BLOCK_M) + m
@@ -124,106 +131,70 @@ def _poincare_fc_fwd_kernel(
         xz = tl.load(XZ_ptr + m_ids, mask=mask_m, other=0.0)
         b = tl.load(B_ptr + m_ids, mask=mask_m, other=0.0)
 
-        # we only need num
         _1, _2, _3, _4, _5, num = single_block_fwd(b, lam, zn, xz, cs)
-
         den_acc += tl.sum(num * num)
 
         tl.store(num_ptr + m_ids, num, mask=mask_m)
 
-    # calculate denominator value
+    # 3) den and ||y||
     den = 1.0 + tl.sqrt(1.0 + c * den_acc)
-
-    # calculate the euclidean norm of the output
     y_norm = tl.sqrt(den_acc / (den * den))
     y_norm = tl.clamp(y_norm, 1e-15, 1e15)
 
-    # write denominator
-    tl.store(den_ptr + row, den)
-    tl.store(y_norm_ptr + row, y_norm)
+    tl.store(den_ptr, den)
+    tl.store(yn_ptr, y_norm)
 
+    # 4) project in-place using stored num
+    scale = tl.where(y_norm < max_norm, 1.0, max_norm / y_norm)
 
-@triton.autotune(
-    configs=[
-        triton.Config({"BLOCK_M": 16}),
-        triton.Config({"BLOCK_M": 32}),
-        triton.Config({"BLOCK_M": 64}),
-        triton.Config({"BLOCK_M": 128}),
-    ],
-    key=["B", "M"],
-)
-@triton.jit
-def _project_kernel(
-    y_ptr,
-    num_ptr,
-    den_ptr,
-    yn_ptr,
-    max_norm,
-    py_ptr,
-    stride_y_b,
-    stride_num_b,
-    stride_py_b,
-    B,
-    M,
-    BLOCK_M: tl.constexpr,
-):
-    pid_b = tl.program_id(0)
-    pid_m = tl.program_id(1)
-
-    offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
-    mask_m = offs_m < M
-
-    num_ptr += pid_b * stride_num_b
-    y_ptr += pid_b * stride_y_b
-    py_ptr += pid_b * stride_py_b
-
-    num = tl.load(num_ptr + offs_m, mask=mask_m, other=0.0)
-    den = tl.load(den_ptr + pid_b)
-    yn = tl.load(yn_ptr + pid_b)
-
-    y = num / den
-    if yn < max_norm:
-        py = y
-    else:
-        py = y / yn * max_norm
-
-    tl.store(py_ptr + offs_m, py, mask=mask_m)
-    tl.store(y_ptr + offs_m, y, mask=mask_m)
+    for m in range(0, M, BLOCK_M):
+        m_ids = tl.arange(0, BLOCK_M) + m
+        mask_m = m_ids < M
+        num = tl.load(num_ptr + m_ids, mask=mask_m, other=0.0)
+        y = num / den
+        py = y * scale
+        tl.store(y_ptr + m_ids, y, mask=mask_m)
+        tl.store(py_ptr + m_ids, py, mask=mask_m)
 
 
 @validate_tensors
 def poincare_fc_project_fwd_triton(
     x: Tensor2D, z: Tensor2D, r: Tensor1D = None, c=1.0, eps: float = -1, return_cache: bool = False
 ):
-    assert x.is_cuda and z.is_cuda, "Input tensors must be on CUDA"
+    assert x.is_cuda and z.is_cuda
     B, K = x.shape
     K2, M = z.shape
-    assert K == K2, "Dimension mismatch"
+    assert K == K2
 
     if not x.is_contiguous():
-        x.contiguous()
+        x = x.contiguous()
 
-    # Compute required intermediates
     c_val = float(c) if not torch.is_tensor(c) else float(c.item())
     cs = math.sqrt(c_val)
     zn = z.norm(dim=0)  # [M]
     xz = x @ z  # [B, M]
 
-    # Allocate output tensors and caches
-    dtype = x.dtype
-    device = x.device
+    dtype, device = x.dtype, x.device
     num = torch.empty((B, M), dtype=dtype, device=device)
     den = torch.empty((B,), dtype=dtype, device=device)
     yn = torch.empty((B,), dtype=dtype, device=device)
     lam = torch.empty((B,), dtype=dtype, device=device)
 
-    # Prepare bias
     if r is None:
-        b = torch.zeros((M,), device="cuda")
+        b = torch.zeros((M,), device=device, dtype=dtype)
     else:
-        b = 2 * cs * r
+        b = (2 * cs * r).to(device=device, dtype=dtype)
 
-    # Launch Triton kernel, passing pointers to all outputs
+    if eps < 0:
+        eps = 4e-3 if x.dtype == torch.float32 else 1e-5
+
+    max_norm = 1e15
+    if c_val > 0:
+        max_norm = (1 - eps) / ((c_val + 1e-15) ** 0.5)
+
+    y = torch.empty_like(num)
+    py = torch.empty_like(num)
+
     grid = (B,)
     _poincare_fc_fwd_kernel[grid](
         x,
@@ -233,43 +204,19 @@ def poincare_fc_project_fwd_triton(
         num,
         den,
         yn,
+        y,
+        py,
         lam,
-        c_val,
-        cs,
+        float(c_val),
+        float(cs),
+        float(max_norm),
         K,
         M,
         x.stride(0),
         xz.stride(0),
         num.stride(0),
-    )
-
-    if eps < 0:
-        if x.dtype == torch.float32:
-            eps = 4e-3
-        else:
-            eps = 1e-5
-
-    max_norm = 1e15
-    if c_val > 0:
-        max_norm = (1 - eps) / ((c_val + 1e-15) ** 0.5)
-
-    # allocate space for result
-    y = torch.empty_like(num)
-    py = torch.empty_like(num)
-
-    grid = lambda meta: (B, triton.cdiv(M, meta["BLOCK_M"]))
-    _project_kernel[grid](
-        y,
-        num,
-        den,
-        yn,
-        max_norm,
-        py,
         y.stride(0),
-        num.stride(0),
         py.stride(0),
-        B,
-        M,
     )
 
     if return_cache:
