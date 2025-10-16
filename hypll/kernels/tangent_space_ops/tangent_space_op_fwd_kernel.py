@@ -1,7 +1,7 @@
 import torch
 import triton.language as tl
 import triton
-from hypll.kernels.utils import atanh, tanh
+from hypll.kernels.utils import Tensor2D, atanh, tanh, validate_tensors
 
 
 def get_autotune_configs():
@@ -92,13 +92,13 @@ def _tangent_space_op_fwd_kernel(
     tl.store(vn_ptr + pid_b, vn)
 
 
+@validate_tensors
 def tangent_space_op_fwd_triton(
-    y: torch.Tensor, c: float, op: str = "relu", return_cache: bool = False
+    y: Tensor2D, c: float, op: str = "relu", return_cache: bool = False
 ):
     if op != "relu":
         raise NotImplementedError("Currently only ReLU is implemented")
 
-    assert y.ndim == 2  # assume y [B, M]
     B, M = y.shape
 
     yn = torch.empty((B,), device="cuda", dtype=y.dtype)

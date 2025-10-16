@@ -1,6 +1,6 @@
 import torch, pytest
 
-from hypll.kernels.fc_fwd_kernel import (
+from hypll.kernels.fc.fc_fwd_kernel import (
     poincare_fc_fwd_project_ref,
     poincare_fc_project_fwd_triton,
 )
@@ -8,7 +8,7 @@ from hypll.manifolds.poincare_ball.curvature import Curvature
 from hypll.manifolds.poincare_ball.manifold import PoincareBall
 from hypll.manifolds.poincare_ball.math.diffgeom import project
 from hypll.manifolds.poincare_ball.math.linalg import poincare_fully_connected
-from hypll.kernels.fc_layer import FastPoincareFC
+from hypll.kernels import FastPoincareFC
 
 import hypll.nn as hnn
 

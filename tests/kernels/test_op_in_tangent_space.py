@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from hypll.kernels.tangent_space_op_layer import FastTangentSpaceOp
+from hypll.kernels import FastTangentSpaceOp
 from hypll.manifolds.poincare_ball.curvature import Curvature
 from hypll.manifolds.poincare_ball.manifold import PoincareBall
 from hypll.tensors.manifold_tensor import ManifoldTensor

@@ -1,7 +1,7 @@
 import pytest
 import torch
-from hypll.kernels.logmap0_fwd_kernel import logmap0_fwd_triton, logmap0_ref
-from hypll.kernels.logmap0_layer import FastLogmap0
+from hypll.kernels.logmap.logmap0_fwd_kernel import logmap0_fwd_triton, logmap0_ref
+from hypll.kernels.logmap.logmap0_layer import FastLogmap0
 from tests.kernels.utils import assert_allclose, safe_rand, requires_cuda
 
 

@@ -1,6 +1,6 @@
 import torch
-from hypll.kernels.expmap0_fwd_kernel import expmap0_fwd_triton, expmap0_ref
-from hypll.kernels.expmap0_layer import FastExpmap0
+from hypll.kernels.expmap.expmap0_fwd_kernel import expmap0_fwd_triton, expmap0_ref
+from hypll.kernels import FastExpmap0
 from tests.kernels.utils import assert_allclose, safe_rand, requires_cuda
 from hypll.manifolds.poincare_ball.math.diffgeom import expmap0
 

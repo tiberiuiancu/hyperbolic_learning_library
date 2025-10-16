@@ -1,7 +1,7 @@
 import torch
 import triton.language as tl
 import triton
-from hypll.kernels.utils import atanh
+from hypll.kernels.utils import Tensor2D, atanh, validate_tensors
 
 
 def get_autotune_configs():
@@ -64,10 +64,8 @@ def _logmap0_fwd_kernel(
     tl.store(yn_ptr + pid_b, yn)
 
 
-def logmap0_fwd_triton(
-    y: torch.Tensor, c: float, activation: str = "none", return_cache: bool = False
-):
-    assert y.ndim == 2  # assume y [B, M]
+@validate_tensors
+def logmap0_fwd_triton(y: Tensor2D, c: float, activation: str = "none", return_cache: bool = False):
     B, M = y.shape
 
     yn = torch.empty((B,), device="cuda", dtype=y.dtype)

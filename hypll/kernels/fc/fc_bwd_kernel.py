@@ -1,8 +1,10 @@
+from typing import Tuple
 import torch
 import triton
 import triton.language as tl
 
-from hypll.kernels.fc_fwd_kernel import single_block_fwd
+from hypll.kernels.fc.fc_fwd_kernel import single_block_fwd
+from hypll.kernels.utils import Tensor1D, Tensor2D
 from hypll.utils.memory import gpu_memory_pool
 
 
@@ -165,37 +167,38 @@ def _dL_dY_kernel(
 
 
 def poincare_fc_bwd_triton(
-    dout,
-    Y,
-    X,
-    Z,
-    XZ,
-    zn,
-    b,
-    lam,
-    num,
-    den,
-    yn,
-    max_norm,
-    c,
-    cs,
-):
-    # TODO: sanity checks
+    dout: Tensor2D,
+    Y: Tensor2D,
+    X: Tensor2D,
+    Z: Tensor2D,
+    XZ: Tensor2D,
+    zn: Tensor1D,
+    b: Tensor1D,
+    lam: Tensor1D,
+    num: Tensor2D,
+    den: Tensor1D,
+    yn: Tensor1D,
+    max_norm: float,
+    c: float,
+    cs: float,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
+    assert Y.shape == dout.shape
+
     B, K = X.shape
     K2, M = Z.shape
-
     assert K == K2
 
     c = c if isinstance(c, float) else c.item()
     cs = cs if isinstance(cs, float) else cs.item()
 
     # preallocate GPU buffers
-    T1 = gpu_memory_pool.get_shared("T1", XZ.shape, torch.float32)
-    T1_num = gpu_memory_pool.get_shared("T1_num", lam.shape, torch.float32)
-    T4_sum = gpu_memory_pool.get_shared("T4_sum", lam.shape, torch.float32)
-    T5 = gpu_memory_pool.get_shared("T5", XZ.shape, torch.float32)
-    T7_sum = gpu_memory_pool.get_shared("T7_sum", b.shape, torch.float32)
-    T8 = gpu_memory_pool.get_shared("T7_sum", XZ.shape, torch.float32)
+    dtype = dout.dtype
+    T1 = gpu_memory_pool.get_shared("T1", XZ.shape, dtype)
+    T1_num = gpu_memory_pool.get_shared("T1_num", lam.shape, dtype)
+    T4_sum = gpu_memory_pool.get_shared("T4_sum", lam.shape, dtype)
+    T5 = gpu_memory_pool.get_shared("T5", XZ.shape, dtype)
+    T7_sum = gpu_memory_pool.get_shared("T7_sum", b.shape, dtype)
+    T8 = gpu_memory_pool.get_shared("T7_sum", XZ.shape, dtype)
 
     T1_num.zero_()
     T4_sum.zero_()
