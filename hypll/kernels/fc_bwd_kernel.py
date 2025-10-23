@@ -262,6 +262,6 @@ def poincare_fc_bwd_triton(
     )
 
     # perform the matrix multiply and addition in one kernel call
-    dX = torch.addmm(X * T4_sum[:, None], T5, Z.T)
+    dX = torch.addmm(X * T4_sum[:, None], T5, Z.T) if X.requires_grad else None
     dZ = torch.addmm(Z * T7_sum[None, :], X.T, T8)
     return dX, dZ, dr
