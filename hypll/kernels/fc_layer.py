@@ -32,7 +32,8 @@ class FastPoincareFC(torch.autograd.Function):
             dout, y, x, z, xz, zn, b, lam, num, den, yn, ctx.max_norm, ctx.c, ctx.cs
         )
 
-        dx = dx.movedim(source=-1, destination=ctx.dim)
+        if dx is not None:
+            dx = dx.movedim(source=-1, destination=ctx.dim)
         dr = dr if ctx.has_bias else None
 
         return dx, dz, dr, None, None
