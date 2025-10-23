@@ -43,6 +43,8 @@ def dim_shift_input(x: torch.Tensor, dim: int) -> torch.Tensor:
 
 
 def dim_shift_output(y: torch.Tensor, dim: int, shape: Iterable) -> torch.Tensor:
+    if y is None:
+        return
     ndim = len(shape)
     if ndim < 2:
         raise ValueError("Input must have at least 2 dimensions")
