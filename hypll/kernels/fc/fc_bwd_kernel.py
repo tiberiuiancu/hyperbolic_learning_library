@@ -184,9 +184,7 @@ def poincare_fc_bwd_triton(
     K2, M = Z.shape
     assert K == K2
 
-    device, dtype = dout.device, dout.dtype
-
-    # outputs / workspaces
+    dtype = dout.dtype
 
     c = c if isinstance(c, float) else c.item()
     cs = cs if isinstance(cs, float) else cs.item()
@@ -236,6 +234,9 @@ def poincare_fc_bwd_triton(
         B,
     )
 
-    dX = torch.addmm(X * T4_sum[:, None], T5, Z.T)
+    if X.requires_grad:
+        dX = torch.addmm(X * T4_sum[:, None], T5, Z.T)
+    else:
+        dX = None
     dZ = torch.addmm(Z * T7_sum[None, :], X.T, T8)
     return dX, dZ, dr
